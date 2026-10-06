@@ -1,0 +1,195 @@
+use std::path::PathBuf;
+
+use clap::{Args, Parser, Subcommand, ValueEnum};
+
+use crate::domain::ControlAction;
+use crate::session::StartOptions;
+use crate::{Error, Result};
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "live-transcript",
+    version,
+    about = "Record and transcribe live meetings locally"
+)]
+pub struct Cli {
+    /// Increase diagnostic verbosity. Repeat for more detail.
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    pub verbose: u8,
+
+    /// Directory under which session directories are created.
+    #[arg(long, default_value = "sessions", global = true)]
+    pub sessions_dir: PathBuf,
+
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// List audio devices visible to the application.
+    Devices,
+    /// Check local prerequisites without changing system configuration.
+    Doctor,
+    /// Start a local recording and transcription session.
+    Start(StartArgs),
+    /// Show the current session state and backlog.
+    Status,
+    /// Pause transcription while audio recording continues.
+    Pause,
+    /// Resume transcription for the active session.
+    Resume,
+    /// Finalize the active session.
+    Stop,
+    /// Export a completed canonical transcript.
+    Export(ExportArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct StartArgs {
+    /// WAV file replayed in real time by the M1 simulator.
+    #[arg(long)]
+    pub input_wav: PathBuf,
+
+    /// Local whisper model path. It is recorded but not used before M3.
+    #[arg(long)]
+    pub model: Option<PathBuf>,
+
+    /// Input device used for the local microphone.
+    #[arg(long)]
+    pub microphone: Option<String>,
+
+    /// Input device used for remote/system audio, normally BlackHole on macOS.
+    #[arg(long)]
+    pub system_audio: Option<String>,
+
+    /// Spoken language. The v1 implementation supports Italian only.
+    #[arg(long, default_value = "it")]
+    pub language: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ExportArgs {
+    /// Session directory containing transcript.jsonl.
+    pub session: PathBuf,
+
+    /// Output representation derived from the canonical JSONL transcript.
+    #[arg(long, value_enum, default_value_t = ExportFormat::Markdown)]
+    pub format: ExportFormat,
+
+    /// Destination file. Standard output is used when omitted.
+    #[arg(short, long)]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ExportFormat {
+    Jsonl,
+    Text,
+    Markdown,
+    Srt,
+    Vtt,
+}
+
+pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
+    let name = match command {
+        Command::Devices => "devices",
+        Command::Doctor => "doctor",
+        Command::Start(args) => {
+            let root = crate::session::run(StartOptions {
+                sessions_dir,
+                input_wav: args.input_wav,
+                model: args.model,
+                language: args.language,
+                microphone: args.microphone,
+                system_audio: args.system_audio,
+            })?;
+            println!("{}", root.display());
+            return Ok(());
+        }
+        Command::Status => {
+            print_status(&crate::control::current_status(&sessions_dir)?)?;
+            return Ok(());
+        }
+        Command::Pause => {
+            print_status(&crate::control::request(
+                &sessions_dir,
+                ControlAction::Pause,
+            )?)?;
+            return Ok(());
+        }
+        Command::Resume => {
+            print_status(&crate::control::request(
+                &sessions_dir,
+                ControlAction::Resume,
+            )?)?;
+            return Ok(());
+        }
+        Command::Stop => {
+            print_status(&crate::control::request(
+                &sessions_dir,
+                ControlAction::Stop,
+            )?)?;
+            return Ok(());
+        }
+        Command::Export(_) => "export",
+    };
+
+    Err(Error::CommandNotImplemented(name))
+}
+
+fn print_status(status: &crate::domain::SessionStatus) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(status)?);
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn clap_definition_is_valid() {
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn start_defaults_to_italian() {
+        let cli = Cli::try_parse_from([
+            "live-transcript",
+            "start",
+            "--input-wav",
+            "tests/fixtures/m1_stream.wav",
+        ])
+        .expect("start command should parse");
+
+        let Command::Start(args) = cli.command else {
+            panic!("expected start command");
+        };
+
+        assert_eq!(args.language, "it");
+        assert_eq!(
+            args.input_wav,
+            PathBuf::from("tests/fixtures/m1_stream.wav")
+        );
+        assert_eq!(cli.sessions_dir, PathBuf::from("sessions"));
+    }
+
+    #[test]
+    fn export_format_parses_from_cli() {
+        let cli = Cli::try_parse_from([
+            "live-transcript",
+            "export",
+            "sessions/example",
+            "--format",
+            "vtt",
+        ])
+        .expect("export command should parse");
+
+        let Command::Export(args) = cli.command else {
+            panic!("expected export command");
+        };
+
+        assert_eq!(args.format, ExportFormat::Vtt);
+    }
+}

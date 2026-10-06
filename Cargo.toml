@@ -1,0 +1,26 @@
+[package]
+name = "live-transcript"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Local-first CLI for recording and transcribing live meetings"
+license = "MIT"
+repository = "https://github.com/FabioTognaa/live-transcript"
+
+[dependencies]
+clap = { version = "4.5.48", features = ["derive"] }
+crossbeam-channel = "0.5.15"
+hound = "3.5.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+thiserror = "2.0.17"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
+uuid = { version = "1.18.1", features = ["serde", "v4"] }
+
+[dev-dependencies]
+tempfile = "3.23.0"
+
+[profile.release]
+lto = "thin"
+strip = true

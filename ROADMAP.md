@@ -17,6 +17,8 @@ cattura live finché il core non funziona su audio riproducibile.
 
 ## M0 — Bootstrap e contratti
 
+**Stato:** completata il 6 ottobre 2026.
+
 **Obiettivo:** creare un progetto Rust compilabile che definisca i confini del
 dominio, senza acquisizione audio o ASR.
 
@@ -39,6 +41,8 @@ dominio, senza acquisizione audio o ASR.
 - Non esistono dipendenze cloud né I/O audio implicito.
 
 ## M1 — Sessioni, eventi e simulatore di stream
+
+**Stato:** completata il 6 ottobre 2026.
 
 **Obiettivo:** dimostrare il ciclo di vita completo di una sessione usando un WAV
 locale come sorgente, letto a velocità reale.

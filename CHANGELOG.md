@@ -12,3 +12,10 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 - Contesto di progetto, decisioni architetturali e roadmap della v1.
 - Documentazione del setup BlackHole per macOS.
 - Politica iniziale di versioning, privacy e qualità.
+- Bootstrap Rust con contratti di dominio, schemi di sessione e logging locale.
+- CLI iniziale con i comandi `devices`, `doctor`, `start`, `status`, `pause`,
+  `resume`, `stop` ed `export`.
+- Simulatore realtime da WAV con normalizzazione mono 16 kHz e persistenza audio
+  incrementale.
+- Controllo tra processi di stato, pausa, ripresa e stop tramite file locali
+  atomici, con metriche della coda bounded.
