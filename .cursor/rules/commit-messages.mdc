@@ -1,0 +1,22 @@
+---
+description: Commit messages without a Cursor co-author trailer
+alwaysApply: true
+---
+
+# Commit messages
+
+Never add a Cursor co-author trailer to commit messages.
+
+```text
+# ❌ BAD
+feat: add session writer
+
+Co-authored-by: Cursor <cursoragent@cursor.com>
+
+# ✅ GOOD
+feat: add session writer
+```
+
+- Do not append `Co-authored-by: Cursor`, `Co-authored-by: cursoragent@cursor.com`, or any equivalent trailer.
+- If a hook or template inserts that trailer, amend only when the commit rules already allow an amend; otherwise create a new commit that does not include it.
+- Keep Conventional Commits and the project changelog policy unchanged.

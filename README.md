@@ -26,6 +26,7 @@ e UI non fanno parte della v1.
 ## Documentazione
 
 - [Contesto completo e scelte architetturali](PROJECT_CONTEXT.md)
+- [Roadmap di implementazione](ROADMAP.md)
 - [Setup BlackHole su macOS](docs/BLACKHOLE_MACOS.md)
 - [Storico delle modifiche](CHANGELOG.md)
 
