@@ -5,15 +5,15 @@ use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use live_transcript::Result;
-use live_transcript::control;
-use live_transcript::domain::{
+use personal_transcriber::Result;
+use personal_transcriber::control;
+use personal_transcriber::domain::{
     ControlAction, InferenceConfig, SegmenterConfig, SessionConfig, SessionEvent, SessionMetadata,
     SessionState, SessionStatus, SpeechSegment, TimestampUs,
 };
-use live_transcript::schema::{EVENTS_FILE, MIXED_AUDIO_FILE, SCHEMA_VERSION};
-use live_transcript::session::{self, NullSegmentSink, SegmentSink, StartOptions};
-use live_transcript::storage::{SessionStorage, read_json};
+use personal_transcriber::schema::{EVENTS_FILE, MIXED_AUDIO_FILE, SCHEMA_VERSION};
+use personal_transcriber::session::{self, NullSegmentSink, SegmentSink, StartOptions};
+use personal_transcriber::storage::{SessionStorage, read_json};
 
 const FIXTURE: &str = "tests/fixtures/m1_stream.wav";
 
@@ -45,7 +45,7 @@ struct FailingStartSink;
 
 impl SegmentSink for FailingStartSink {
     fn start(&mut self, _session_id: uuid::Uuid, _transcript_path: &Path) -> Result<()> {
-        Err(live_transcript::Error::Asr(
+        Err(personal_transcriber::Error::Asr(
             "intentional startup failure".to_owned(),
         ))
     }
@@ -204,7 +204,7 @@ fn shutdown_signal_finalizes_a_readable_partial_session() {
 
     assert!(matches!(
         error,
-        live_transcript::Error::SessionInterrupted(path) if path == root
+        personal_transcriber::Error::SessionInterrupted(path) if path == root
     ));
     assert_eq!(status.state, SessionState::Failed);
     assert!(status.audio_position < TimestampUs(1_200_000));
@@ -226,7 +226,7 @@ fn startup_failure_finalizes_files_and_marks_the_session_failed() {
     let report = control::status_report(&sessions_dir).expect("failed session should be readable");
     let status = control::current_status(&sessions_dir).expect("failed status should be readable");
 
-    assert!(matches!(error, live_transcript::Error::Asr(_)));
+    assert!(matches!(error, personal_transcriber::Error::Asr(_)));
     assert_eq!(status.state, SessionState::Failed);
     assert_eq!(
         wav_samples(&report.session_root.join("audio").join(MIXED_AUDIO_FILE)),
@@ -330,7 +330,7 @@ fn concurrent_pause_and_stop_cannot_falsely_acknowledge_stop() {
             Ok(SessionStatus {
                 state: SessionState::TranscriptionPaused,
                 ..
-            }) | Err(live_transcript::Error::InvalidControlState {
+            }) | Err(personal_transcriber::Error::InvalidControlState {
                 state: SessionState::Completed,
                 ..
             })

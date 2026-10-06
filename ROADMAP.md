@@ -87,13 +87,13 @@ locale come sorgente, letto a velocità reale.
 
 **Stato:** completata il 6 ottobre 2026.
 
-**Obiettivo:** integrare `whisper.cpp` e scegliere un modello italiano sostenibile
-sull'hardware Apple Silicon target.
+**Obiettivo:** integrare `whisper.cpp` e scegliere un modello multilingue sostenibile
+sull'hardware Apple Silicon target, valutato inizialmente sull'italiano.
 
 **Implementazione**
 
 - Integrare `whisper.cpp` mediante binding Rust controllati.
-- Rendere espliciti modello, lingua italiana e parametri d'inferenza.
+- Rendere espliciti modello, lingua e parametri d'inferenza.
 - Convertire segmenti VAD in eventi transcript finali.
 - Salvare modello e configurazione su ogni sessione.
 - Aggiungere un benchmark riproducibile separato dai test.
@@ -168,6 +168,16 @@ validare sull'hardware con BlackHole.
 
 ## M6 — Hardening e prerelease
 
+**Stato:** in corso. CI, limiti noti e istruzioni di installazione sono nel
+repository. La milestone non è chiusa e `0.1.0-alpha.1` non è taggata.
+
+Le prove che chiudono la milestone restano manuali sul Mac di test. Non vanno
+sostituite con altri test sintetici: sessione lunga con pause, recovery dopo
+crash o terminazione forzata, lettura di backlog e `capture.clock_drift_us` in
+`status.json`, picco RSS nel report del benchmark ASR, e una call reale senza
+perdita non segnalata. L'ultimo punto è bloccato finché BlackHole non è
+installato e visibile.
+
 **Obiettivo:** rendere la v1 utilizzabile per call reali di durata significativa.
 
 **Implementazione**
@@ -187,6 +197,6 @@ validare sull'hardware con BlackHole.
 
 ## Dopo la v1
 
-L'ordine previsto è: supporto inglese, rilevamento automatico lingua, adattatori
-Windows/Linux, poi eventuale diarizzazione. UI, bot di meeting e funzionalità cloud
-restano fuori scope finché non esiste una motivazione di prodotto esplicita.
+L'ordine previsto è: rilevamento automatico lingua, adattatori Windows/Linux, poi
+eventuale diarizzazione. UI, bot di meeting e funzionalità cloud restano fuori
+scope finché non esiste una motivazione di prodotto esplicita.

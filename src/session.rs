@@ -594,7 +594,7 @@ fn persist_failed_session(
 }
 
 fn validate_language(language: &str) -> Result<()> {
-    if language == "it" {
+    if matches!(language, "it" | "en") {
         Ok(())
     } else {
         Err(Error::UnsupportedLanguage(language.to_owned()))
@@ -919,5 +919,24 @@ impl RunnerGuard {
         let lock = ExclusiveFileLock::try_acquire(&path)?
             .ok_or_else(|| Error::ActiveSessionExists(sessions_dir.to_path_buf()))?;
         Ok(Self { _lock: lock })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_language;
+    use crate::Error;
+
+    #[test]
+    fn supported_languages_are_accepted() {
+        assert!(validate_language("it").is_ok());
+        assert!(validate_language("en").is_ok());
+    }
+
+    #[test]
+    fn unsupported_language_is_rejected() {
+        let error = validate_language("fr").expect_err("French should not be supported");
+
+        assert!(matches!(error, Error::UnsupportedLanguage(language) if language == "fr"));
     }
 }

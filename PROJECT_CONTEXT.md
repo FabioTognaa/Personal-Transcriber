@@ -1,8 +1,8 @@
-# live-transcript — contesto di progetto
+# personal-transcriber — contesto di progetto
 
 ## Stato e obiettivo
 
-`live-transcript` è un tool CLI, inizialmente privato e open source in seguito, per
+`personal-transcriber` è un tool CLI, inizialmente privato e open source in seguito, per
 registrare e trascrivere localmente una riunione in corso su macOS Apple Silicon.
 
 La versione 1 deve catturare:
@@ -25,8 +25,8 @@ servizio collaborativo. È un programma da terminale.
 - Interfaccia: CLI.
 - Audio: una traccia finale mixata, composta da microfono locale e audio della call.
 - Audio di sistema macOS: BlackHole, configurato dall'utente.
-- Linguaggio iniziale: italiano.
-- Lingue successive: inglese, poi rilevamento automatico.
+- Lingue supportate: italiano e inglese, selezionate esplicitamente per sessione.
+- Lingua futura: rilevamento automatico.
 - Elaborazione: solo locale.
 - Latenza: segmenti finali dopo una pausa, circa 3–15 secondi.
 - Audio originale: conservato localmente per sessione.
@@ -34,7 +34,7 @@ servizio collaborativo. È un programma da terminale.
 - Cifratura a riposo: non inclusa nella v1.
 - Licenza: MIT.
 - Repository iniziale: privato su GitHub.
-- Nome del progetto: `live-transcript`.
+- Nome del progetto: `personal-transcriber`.
 
 ## Definizione precisa di “raw”
 
@@ -68,14 +68,14 @@ metadati della sessione e indica i file prodotti. L'esportazione in formati legg
 ## Comandi CLI previsti
 
 ```text
-live-transcript devices
-live-transcript doctor
-live-transcript start [opzioni]
-live-transcript status
-live-transcript pause
-live-transcript resume
-live-transcript stop
-live-transcript export <sessione> [opzioni]
+personal-transcriber devices
+personal-transcriber doctor
+personal-transcriber start [opzioni]
+personal-transcriber status
+personal-transcriber pause
+personal-transcriber resume
+personal-transcriber stop
+personal-transcriber export <sessione> [opzioni]
 ```
 
 `devices` elenca input e output audio rilevati. `doctor` verifica prerequisiti:
@@ -290,9 +290,9 @@ pubblico.
 6. Hardening: recovery, test end-to-end, CI, documentazione setup BlackHole.
 7. Pubblicazione privata GitHub e prima prerelease.
 
-Windows/Linux, inglese, rilevamento automatico lingua, speaker diarization e UI sono
-fuori dalla v1. Ogni estensione deve essere progettata tramite una decisione
-architetturale dedicata, senza alterare l'integrità della pipeline locale.
+Windows/Linux, rilevamento automatico lingua, speaker diarization e UI sono fuori
+dalla v1. Ogni estensione deve essere progettata tramite una decisione architetturale
+dedicata, senza alterare l'integrità della pipeline locale.
 
 ## Regole di implementazione
 

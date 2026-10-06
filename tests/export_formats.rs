@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::Path;
 
-use live_transcript::domain::{
+use personal_transcriber::domain::{
     InferenceConfig, SessionConfig, SessionMetadata, SessionState, TimestampUs, TranscriptSegment,
 };
-use live_transcript::export::{self, Format};
-use live_transcript::schema::{SCHEMA_VERSION, SESSION_METADATA_FILE, TRANSCRIPT_FILE};
+use personal_transcriber::export::{self, Format};
+use personal_transcriber::schema::{SCHEMA_VERSION, SESSION_METADATA_FILE, TRANSCRIPT_FILE};
 use uuid::Uuid;
 
 const RAW_TEXT: &str = " Testo ASR  non corretto.";

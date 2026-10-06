@@ -1,9 +1,9 @@
 use clap::Parser;
-use live_transcript::cli::{self, Cli};
+use personal_transcriber::cli::{self, Cli};
 
 fn main() {
     let cli = Cli::parse();
-    live_transcript::logging::init(cli.verbose);
+    personal_transcriber::logging::init(cli.verbose);
 
     if let Err(error) = cli::execute(cli.command, cli.sessions_dir) {
         tracing::error!(%error);

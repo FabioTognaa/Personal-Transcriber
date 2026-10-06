@@ -24,7 +24,7 @@ pub enum Error {
         available_bytes: u64,
     },
 
-    #[error("unsupported language `{0}`; the v1 implementation supports only `it`")]
+    #[error("unsupported language `{0}`; supported languages are `it` and `en`")]
     UnsupportedLanguage(String),
 
     #[error("an active session already exists at {}", .0.display())]

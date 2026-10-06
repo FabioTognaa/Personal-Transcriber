@@ -573,27 +573,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
-name = "live-transcript"
-version = "0.0.0"
-dependencies = [
- "clap",
- "cpal",
- "crossbeam-channel",
- "hound",
- "libc",
- "serde",
- "serde_json",
- "sha2",
- "signal-hook",
- "tempfile",
- "thiserror 2.0.21",
- "tracing",
- "tracing-subscriber",
- "uuid",
- "whisper-rs",
-]
-
-[[package]]
 name = "log"
 version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -802,6 +781,27 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
+
+[[package]]
+name = "personal-transcriber"
+version = "0.0.0"
+dependencies = [
+ "clap",
+ "cpal",
+ "crossbeam-channel",
+ "hound",
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "signal-hook",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "whisper-rs",
+]
 
 [[package]]
 name = "pin-project-lite"

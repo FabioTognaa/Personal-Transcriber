@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 
-use live_transcript::audio::FileAudioSource;
-use live_transcript::domain::{SegmenterConfig, TimestampUs};
-use live_transcript::segment::Segmenter;
+use personal_transcriber::audio::FileAudioSource;
+use personal_transcriber::domain::{SegmenterConfig, TimestampUs};
+use personal_transcriber::segment::Segmenter;
 
 const FIXTURE: &str = "tests/fixtures/m2_speech_with_short_pause.wav";
 

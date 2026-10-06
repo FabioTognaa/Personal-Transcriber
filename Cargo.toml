@@ -1,12 +1,12 @@
 [package]
-name = "live-transcript"
+name = "personal-transcriber"
 version = "0.0.0"
 edition = "2024"
 rust-version = "1.88"
-default-run = "live-transcript"
+default-run = "personal-transcriber"
 description = "Local-first CLI for recording and transcribing live meetings"
 license = "MIT"
-repository = "https://github.com/FabioTognaa/live-transcript"
+repository = "https://github.com/FabioTognaa/personal-transcriber"
 
 [dependencies]
 clap = { version = "4.5.48", features = ["derive"] }

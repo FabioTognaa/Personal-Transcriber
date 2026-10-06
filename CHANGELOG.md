@@ -9,6 +9,9 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
 ### Added
 
+- Workflow GitHub Actions su macOS per formattazione, lint, test e build.
+- Istruzioni di installazione e sezione dei limiti noti della v1.
+- Relazione sul funzionamento: stack, comandi e flusso dalla cattura all'export.
 - Contesto di progetto, decisioni architetturali e roadmap della v1.
 - Documentazione del setup BlackHole per macOS.
 - Politica iniziale di versioning, privacy e qualità.
@@ -23,8 +26,8 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
   preroll/postroll, silenzio finale e limite massimo di durata.
 - Worker e coda bounded dedicati alla segmentazione, con metriche osservabili e
   flush dei segmenti pendenti durante pausa e arresto.
-- Trascrizione locale italiana tramite whisper.cpp, accelerata con Metal e
-  configurabile dalla CLI.
+- Trascrizione locale italiana e inglese tramite whisper.cpp, accelerata con Metal
+  e configurabile dalla CLI.
 - Transcript canonico verbatim con identità SHA-256 del modello, parametri
   d'inferenza e metriche ASR persistite per sessione.
 - Benchmark ASR riproducibile con fixture non sensibili, WER/CER, real-time factor,

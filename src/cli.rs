@@ -8,7 +8,7 @@ use crate::{Error, Result};
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "live-transcript",
+    name = "personal-transcriber",
     version,
     about = "Record and transcribe live meetings locally"
 )]
@@ -45,10 +45,12 @@ pub enum Command {
     Export(ExportArgs),
 }
 
+const DEFAULT_MODEL: &str = "models/ggml-small-q5_1.bin";
+
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
     /// Local whisper.cpp GGML model to validate.
-    #[arg(long, default_value = "models/ggml-small-q5_1.bin")]
+    #[arg(long, default_value = DEFAULT_MODEL)]
     pub model: PathBuf,
 
     /// Open both live inputs and require signal on each.
@@ -75,7 +77,7 @@ pub struct StartArgs {
     pub input_wav: Option<PathBuf>,
 
     /// Local whisper.cpp GGML model path.
-    #[arg(long)]
+    #[arg(long, default_value = DEFAULT_MODEL)]
     pub model: PathBuf,
 
     /// Input device used for the local microphone.
@@ -86,7 +88,7 @@ pub struct StartArgs {
     #[arg(long, conflicts_with = "input_wav")]
     pub system_audio: Option<String>,
 
-    /// Spoken language. The v1 implementation supports Italian only.
+    /// Spoken language: `it` or `en`.
     #[arg(long, default_value = "it")]
     pub language: String,
 
@@ -315,7 +317,7 @@ mod tests {
     #[test]
     fn start_defaults_to_italian() {
         let cli = Cli::try_parse_from([
-            "live-transcript",
+            "personal-transcriber",
             "start",
             "--input-wav",
             "tests/fixtures/m1_stream.wav",
@@ -338,9 +340,42 @@ mod tests {
     }
 
     #[test]
+    fn start_defaults_to_the_small_model() {
+        let cli = Cli::try_parse_from(["personal-transcriber", "start"])
+            .expect("start command should parse");
+
+        let Command::Start(args) = cli.command else {
+            panic!("expected start command");
+        };
+
+        assert_eq!(args.model, PathBuf::from(DEFAULT_MODEL));
+    }
+
+    #[test]
+    fn start_accepts_english() {
+        let cli = Cli::try_parse_from([
+            "personal-transcriber",
+            "start",
+            "--input-wav",
+            "tests/fixtures/m1_stream.wav",
+            "--model",
+            "models/fixture.bin",
+            "--language",
+            "en",
+        ])
+        .expect("start command should parse");
+
+        let Command::Start(args) = cli.command else {
+            panic!("expected start command");
+        };
+
+        assert_eq!(args.language, "en");
+    }
+
+    #[test]
     fn export_format_parses_from_cli() {
         let cli = Cli::try_parse_from([
-            "live-transcript",
+            "personal-transcriber",
             "export",
             "sessions/example",
             "--format",

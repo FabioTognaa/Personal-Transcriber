@@ -1,13 +1,13 @@
 use std::fs;
 use std::path::PathBuf;
 
-use live_transcript::Result;
-use live_transcript::asr::{AsrEngine, AsrOutput, TranscribingSink, WhisperEngine, model_identity};
-use live_transcript::audio::FileAudioSource;
-use live_transcript::domain::{
+use personal_transcriber::Result;
+use personal_transcriber::asr::{AsrEngine, AsrOutput, TranscribingSink, WhisperEngine, model_identity};
+use personal_transcriber::audio::FileAudioSource;
+use personal_transcriber::domain::{
     InferenceConfig, ModelIdentity, SegmenterConfig, SpeechSegment, TranscriptSegment,
 };
-use live_transcript::session::{self, SegmentSink, StartOptions};
+use personal_transcriber::session::{self, SegmentSink, StartOptions};
 use uuid::Uuid;
 
 const FIXTURE: &str = "tests/fixtures/m2_speech_with_short_pause.wav";
@@ -38,14 +38,14 @@ impl AsrEngine for FailingAsrEngine {
         _language: &str,
         _config: &InferenceConfig,
     ) -> Result<AsrOutput> {
-        Err(live_transcript::Error::Asr(
+        Err(personal_transcriber::Error::Asr(
             "fixture inference failure".to_owned(),
         ))
     }
 }
 
 #[test]
-fn simulated_session_writes_verbatim_canonical_transcript() {
+fn simulated_english_session_writes_verbatim_canonical_transcript() {
     let temporary = tempfile::tempdir().expect("temp directory should be created");
     let sessions_dir = temporary.path().join("sessions");
     let model = fixture_model();
@@ -53,7 +53,7 @@ fn simulated_session_writes_verbatim_canonical_transcript() {
     let mut sink = TranscribingSink::new(
         MockAsrEngine,
         model.clone(),
-        "it".to_owned(),
+        "en".to_owned(),
         inference.clone(),
     );
 
@@ -62,7 +62,7 @@ fn simulated_session_writes_verbatim_canonical_transcript() {
             sessions_dir: sessions_dir.clone(),
             input_wav: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FIXTURE)),
             model: Some(model.path.clone()),
-            language: "it".to_owned(),
+            language: "en".to_owned(),
             microphone: None,
             system_audio: None,
             segmenter: SegmenterConfig::default(),
@@ -81,12 +81,12 @@ fn simulated_session_writes_verbatim_canonical_transcript() {
         .collect::<Vec<_>>();
     assert_eq!(segments.len(), 1);
     assert_eq!(segments[0].text, RAW_TEXT);
-    assert_eq!(segments[0].language, "it");
+    assert_eq!(segments[0].language, "en");
     assert_eq!(segments[0].model, model.name);
     assert_eq!(segments[0].model_sha256, model.sha256);
     assert_eq!(segments[0].inference, inference);
 
-    let status = live_transcript::control::current_status(&sessions_dir)
+    let status = personal_transcriber::control::current_status(&sessions_dir)
         .expect("final status should be readable");
     assert_eq!(status.asr.segments_transcribed, 1);
     assert_eq!(status.asr_queue_depth, 0);
@@ -107,8 +107,8 @@ fn duplicate_segment_ranges_are_not_appended_twice() {
     sink.start(Uuid::nil(), &transcript)
         .expect("sink should start");
     let segment = SpeechSegment {
-        start: live_transcript::domain::TimestampUs(0),
-        end: live_transcript::domain::TimestampUs(200_000),
+        start: personal_transcriber::domain::TimestampUs(0),
+        end: personal_transcriber::domain::TimestampUs(200_000),
         samples: vec![0.25; 3_200],
     };
     sink.accept(&segment).expect("first segment should queue");
@@ -139,8 +139,8 @@ fn worker_reports_the_original_inference_error() {
     sink.start(Uuid::nil(), &transcript)
         .expect("sink should start");
     sink.accept(&SpeechSegment {
-        start: live_transcript::domain::TimestampUs(0),
-        end: live_transcript::domain::TimestampUs(200_000),
+        start: personal_transcriber::domain::TimestampUs(0),
+        end: personal_transcriber::domain::TimestampUs(200_000),
         samples: vec![0.25; 3_200],
     })
     .expect("segment should queue");
@@ -148,16 +148,16 @@ fn worker_reports_the_original_inference_error() {
     let error = sink.finish().expect_err("inference should fail");
     assert!(matches!(
         error,
-        live_transcript::Error::Asr(message) if message == "fixture inference failure"
+        personal_transcriber::Error::Asr(message) if message == "fixture inference failure"
     ));
 }
 
 #[test]
-#[ignore = "requires LIVE_TRANSCRIPT_MODEL and a local GGML model"]
+#[ignore = "requires PERSONAL_TRANSCRIBER_MODEL and a local GGML model"]
 fn real_whisper_model_processes_local_audio() {
     let model_path = PathBuf::from(
-        std::env::var("LIVE_TRANSCRIPT_MODEL")
-            .expect("LIVE_TRANSCRIPT_MODEL must point to a GGML model"),
+        std::env::var("PERSONAL_TRANSCRIBER_MODEL")
+            .expect("PERSONAL_TRANSCRIBER_MODEL must point to a GGML model"),
     );
     let config = InferenceConfig::default();
     let mut engine = WhisperEngine::load(&model_path, &config).expect("model should load");
@@ -168,8 +168,8 @@ fn real_whisper_model_processes_local_audio() {
         .flat_map(|chunk| chunk.samples)
         .collect::<Vec<_>>();
     let segment = SpeechSegment {
-        start: live_transcript::domain::TimestampUs(0),
-        end: live_transcript::domain::TimestampUs(2_200_000),
+        start: personal_transcriber::domain::TimestampUs(0),
+        end: personal_transcriber::domain::TimestampUs(2_200_000),
         samples,
     };
 

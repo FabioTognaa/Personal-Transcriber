@@ -5,9 +5,9 @@ use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
-use live_transcript::asr::{AsrEngine, WhisperEngine, model_identity};
-use live_transcript::audio::FileAudioSource;
-use live_transcript::domain::{
+use personal_transcriber::asr::{AsrEngine, WhisperEngine, model_identity};
+use personal_transcriber::audio::FileAudioSource;
+use personal_transcriber::domain::{
     InferenceConfig, InferenceStrategy, SpeechSegment, TARGET_SAMPLE_RATE_HZ, TimestampUs,
 };
 use serde::Serialize;
