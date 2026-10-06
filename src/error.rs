@@ -4,11 +4,28 @@ use crate::domain::{ControlAction, SessionState};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    #[error("command `{0}` is not implemented yet")]
-    CommandNotImplemented(&'static str),
-
     #[error("invalid session path: {}", .0.display())]
     InvalidSessionPath(PathBuf),
+
+    #[error("invalid {label} path {}: {reason}", path.display())]
+    InvalidPath {
+        label: &'static str,
+        path: PathBuf,
+        reason: String,
+    },
+
+    #[error(
+        "insufficient disk space at {}: {available_bytes} bytes available, {required_bytes} required",
+        path.display()
+    )]
+    InsufficientDiskSpace {
+        path: PathBuf,
+        required_bytes: u64,
+        available_bytes: u64,
+    },
+
+    #[error("unsupported language `{0}`; the v1 implementation supports only `it`")]
+    UnsupportedLanguage(String),
 
     #[error("an active session already exists at {}", .0.display())]
     ActiveSessionExists(PathBuf),
@@ -31,11 +48,33 @@ pub enum Error {
     #[error("invalid inference configuration: {0}")]
     InvalidInferenceConfig(String),
 
+    #[error("invalid transcript {} at line {line}: {reason}", path.display())]
+    InvalidTranscript {
+        path: PathBuf,
+        line: usize,
+        reason: String,
+    },
+
+    #[error("invalid export: {0}")]
+    InvalidExport(String),
+
     #[error("local ASR failed: {0}")]
     Asr(String),
 
+    #[error("local audio subsystem failed: {0}")]
+    Audio(String),
+
+    #[error("one or more required doctor checks failed")]
+    DoctorFailed,
+
     #[error("timed out waiting for the session to apply a control request")]
     ControlTimeout,
+
+    #[error("operation interrupted before the session started")]
+    OperationInterrupted,
+
+    #[error("session interrupted; partial data was finalized at {}", .0.display())]
+    SessionInterrupted(PathBuf),
 
     #[error("cannot apply {action:?} while the session is {state:?}")]
     InvalidControlState {

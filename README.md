@@ -57,6 +57,9 @@ cargo run -- resume
 cargo run -- stop
 ```
 
+`status` restituisce un report JSON con metadati, durata, stato, backlog, ritardo
+rispetto all'ultimo segmento ASR e percorsi dei file della sessione.
+
 La pausa riguarda solo la segmentazione e la futura trascrizione: l'audio continua
 a essere scritto. Il segmento pendente viene chiuso quando inizia la pausa e
 l'elaborazione riparte senza attraversare l'intervallo sospeso.
@@ -69,7 +72,41 @@ silenzio finale e durata massima. Le soglie sono configurabili tramite le opzion
 Il worker ASR usa una coda bounded separata e scrive ogni segmento finale,
 senza correzioni successive, in `transcript.jsonl`. Identità del modello,
 configurazione d'inferenza, backlog e real-time factor sono persistiti nella
-sessione. I comandi `devices`, `doctor` ed `export` restano stub.
+sessione.
+
+## Diagnostica ed export
+
+`devices` elenca in JSON i dispositivi CoreAudio visibili, le direzioni supportate
+e le configurazioni predefinite:
+
+```sh
+cargo run -- devices
+```
+
+`doctor` verifica Apple Silicon, directory delle sessioni, spazio libero, modello,
+input audio e presenza di BlackHole senza aprire stream o modificare macOS:
+
+```sh
+cargo run -- doctor
+cargo run -- doctor --model /percorso/al/modello.bin
+```
+
+L'assenza di un prerequisito produce `ready: false` ed exit code non zero. Il
+permesso microfono e il routing effettivo restano esplicitamente non verificati
+finché non viene eseguita la cattura live.
+
+Ogni export deriva da `transcript.jsonl` e conserva il testo ASR senza correzioni:
+
+```sh
+cargo run -- export sessions/<sessione> --format text
+cargo run -- export sessions/<sessione> --format markdown --output transcript.md
+cargo run -- export sessions/<sessione> --format srt --output transcript.srt
+cargo run -- export sessions/<sessione> --format vtt --output transcript.vtt
+```
+
+Sono supportati `jsonl`, `text`, `markdown`, `srt` e `vtt`. Senza `--output`,
+l'export viene scritto sullo standard output. SIGINT e SIGTERM finalizzano i dati
+parziali, marcano la sessione come fallita e ne riportano il percorso recuperabile.
 
 Il benchmark riproducibile, le fixture e i risultati di riferimento per Apple M5
 sono descritti in [`benchmarks/README.md`](benchmarks/README.md).

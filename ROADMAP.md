@@ -112,6 +112,8 @@ target Apple M5 il benchmark sintetico di 12,46 secondi ha misurato RTF mediano
 
 ## M4 — Export e operatività CLI
 
+**Stato:** completata il 6 ottobre 2026.
+
 **Obiettivo:** rendere utile una sessione completata senza introdurre UI.
 
 **Implementazione**
@@ -126,6 +128,12 @@ target Apple M5 il benchmark sintetico di 12,46 secondi ha misurato RTF mediano
 - Tutti gli export derivano dallo stesso transcript canonico.
 - `doctor` individua precondizioni mancanti senza cambiare configurazioni macOS.
 - Una sessione interrotta lascia dati leggibili e segnala correttamente l'errore.
+
+Gli export JSONL, testo, Markdown, SRT e VTT validano il transcript canonico e
+proteggono il file sorgente da sovrascritture. `devices` enumera CoreAudio e
+`doctor` verifica piattaforma, filesystem, modello e prerequisiti audio senza
+aprire stream. SIGINT e SIGTERM finalizzano WAV e metadati, registrano l'errore e
+restituiscono il percorso della sessione parziale.
 
 ## M5 — Cattura live macOS
 

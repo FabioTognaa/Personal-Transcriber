@@ -1,6 +1,6 @@
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{RecvTimeoutError, TrySendError, bounded};
 use uuid::Uuid;
 
-use crate::asr::{TranscribingSink, WhisperEngine, model_identity};
+use crate::asr::{TranscribingSink, WhisperEngine, model_identity, validate_inference_config};
 use crate::audio::FileAudioSource;
 use crate::domain::{
     AsrMetrics, ControlAction, ControlRequest, InferenceConfig, ModelIdentity, PcmChunk,
@@ -72,7 +72,11 @@ impl SegmentSink for NullSegmentSink {
 }
 
 pub fn run(options: StartOptions) -> Result<PathBuf> {
+    let shutdown = ShutdownSignals::install()?;
+    validate_language(&options.language)?;
+    validate_inference_config(&options.inference)?;
     let model_path = options.model.as_deref().ok_or(Error::ModelRequired)?;
+    crate::validation::validate_existing_file(model_path, "model")?;
     let identity = model_identity(model_path)?;
     let engine = WhisperEngine::load(model_path, &options.inference)?;
     let mut sink = TranscribingSink::new(
@@ -83,17 +87,45 @@ pub fn run(options: StartOptions) -> Result<PathBuf> {
     );
     let mut options = options;
     options.model_identity = Some(identity);
-    run_with_sink(options, &mut sink)
+    if shutdown.requested.load(Ordering::Relaxed) {
+        return Err(Error::OperationInterrupted);
+    }
+    run_with_sink_internal(options, &mut sink, Some(&shutdown.requested))
 }
 
 pub fn run_with_sink(
     options: StartOptions,
     sink: &mut (impl SegmentSink + Send),
 ) -> Result<PathBuf> {
+    run_with_sink_internal(options, sink, None)
+}
+
+pub fn run_with_sink_until(
+    options: StartOptions,
+    sink: &mut (impl SegmentSink + Send),
+    shutdown_requested: &AtomicBool,
+) -> Result<PathBuf> {
+    run_with_sink_internal(options, sink, Some(shutdown_requested))
+}
+
+fn run_with_sink_internal(
+    options: StartOptions,
+    sink: &mut (impl SegmentSink + Send),
+    shutdown_requested: Option<&AtomicBool>,
+) -> Result<PathBuf> {
+    crate::validation::validate_directory_target(&options.sessions_dir, "sessions directory")?;
     ensure_no_active_session(&options.sessions_dir)?;
     let _runner_guard = RunnerGuard::acquire(&options.sessions_dir)?;
+    validate_language(&options.language)?;
+    validate_inference_config(&options.inference)?;
+    crate::validation::validate_existing_file(&options.input_wav, "input WAV")?;
     let source = FileAudioSource::open(&options.input_wav)?;
     let segmenter_config = options.segmenter.clone();
+    let segmenter = Segmenter::new(segmenter_config.clone())?;
+    crate::validation::ensure_disk_space(
+        &options.sessions_dir,
+        crate::validation::estimated_session_bytes(source.sample_count()),
+    )?;
 
     let session_id = Uuid::new_v4();
     let started_at_unix_ms = unix_time_ms()?;
@@ -156,8 +188,7 @@ pub fn run_with_sink(
     let max_queue_depth = Arc::new(AtomicUsize::new(0));
     let max_segmentation_queue_depth = Arc::new(AtomicUsize::new(0));
     let segmentation_metrics = Arc::new(Mutex::new(SegmentationMetrics::default()));
-    let segmenter = Segmenter::new(segmenter_config.clone())?;
-
+    let mut interrupted = false;
     let processing_result = thread::scope(|scope| -> Result<()> {
         let producer_max = Arc::clone(&max_queue_depth);
         let producer = scope.spawn(move || {
@@ -198,6 +229,12 @@ pub fn run_with_sink(
         loop {
             let previous_state = status.state;
             apply_control_if_present(&mut storage, &mut metadata, &mut status)?;
+            interrupted |= apply_shutdown_if_requested(
+                shutdown_requested,
+                &storage,
+                &mut metadata,
+                &mut status,
+            )?;
             if previous_state == SessionState::Running
                 && status.state == SessionState::TranscriptionPaused
             {
@@ -328,6 +365,22 @@ pub fn run_with_sink(
         return Err(error);
     }
 
+    if interrupted {
+        metadata.state = SessionState::Failed;
+        metadata.ended_at_unix_ms = Some(unix_time_ms()?);
+        status.state = SessionState::Failed;
+        storage.append_event(&SessionEvent::Error {
+            schema_version: SCHEMA_VERSION,
+            session_id,
+            at: status.audio_position,
+            message: "termination signal received; partial session finalized".to_owned(),
+        })?;
+        storage.finalize_audio()?;
+        storage.write_metadata(&metadata)?;
+        storage.write_status(&status)?;
+        return Err(Error::SessionInterrupted(storage.paths.root.clone()));
+    }
+
     storage.append_event(&SessionEvent::SessionStopped {
         schema_version: SCHEMA_VERSION,
         session_id,
@@ -342,6 +395,73 @@ pub fn run_with_sink(
     storage.write_status(&status)?;
 
     Ok(storage.paths.root)
+}
+
+fn validate_language(language: &str) -> Result<()> {
+    if language == "it" {
+        Ok(())
+    } else {
+        Err(Error::UnsupportedLanguage(language.to_owned()))
+    }
+}
+
+fn apply_shutdown_if_requested(
+    shutdown_requested: Option<&AtomicBool>,
+    storage: &SessionStorage,
+    metadata: &mut SessionMetadata,
+    status: &mut SessionStatus,
+) -> Result<bool> {
+    let requested = shutdown_requested.is_some_and(|requested| requested.load(Ordering::Relaxed));
+    if requested
+        && matches!(
+            status.state,
+            SessionState::Running | SessionState::TranscriptionPaused
+        )
+    {
+        status.state = SessionState::Stopping;
+        metadata.state = SessionState::Stopping;
+        storage.write_metadata(metadata)?;
+        storage.write_status(status)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+struct ShutdownSignals {
+    requested: Arc<AtomicBool>,
+    registrations: Vec<signal_hook::SigId>,
+}
+
+impl ShutdownSignals {
+    fn install() -> Result<Self> {
+        use signal_hook::consts::signal::{SIGINT, SIGTERM};
+
+        let requested = Arc::new(AtomicBool::new(false));
+        let mut registrations = Vec::new();
+        for signal in [SIGINT, SIGTERM] {
+            match signal_hook::flag::register(signal, Arc::clone(&requested)) {
+                Ok(registration) => registrations.push(registration),
+                Err(error) => {
+                    for registration in registrations {
+                        signal_hook::low_level::unregister(registration);
+                    }
+                    return Err(error.into());
+                }
+            }
+        }
+        Ok(Self {
+            requested,
+            registrations,
+        })
+    }
+}
+
+impl Drop for ShutdownSignals {
+    fn drop(&mut self) {
+        for registration in self.registrations.drain(..) {
+            signal_hook::low_level::unregister(registration);
+        }
+    }
 }
 
 enum SegmentationCommand {

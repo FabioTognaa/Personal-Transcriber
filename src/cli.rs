@@ -30,7 +30,7 @@ pub enum Command {
     /// List audio devices visible to the application.
     Devices,
     /// Check local prerequisites without changing system configuration.
-    Doctor,
+    Doctor(DoctorArgs),
     /// Start a local recording and transcription session.
     Start(StartArgs),
     /// Show the current session state and backlog.
@@ -43,6 +43,13 @@ pub enum Command {
     Stop,
     /// Export a completed canonical transcript.
     Export(ExportArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct DoctorArgs {
+    /// Local whisper.cpp GGML model to validate.
+    #[arg(long, default_value = "models/ggml-small-q5_1.bin")]
+    pub model: PathBuf,
 }
 
 #[derive(Debug, Args)]
@@ -167,9 +174,20 @@ pub enum ExportFormat {
 }
 
 pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
-    let name = match command {
-        Command::Devices => "devices",
-        Command::Doctor => "doctor",
+    match command {
+        Command::Devices => {
+            print_json(&crate::diagnostics::audio_devices()?)?;
+            Ok(())
+        }
+        Command::Doctor(args) => {
+            let report = crate::diagnostics::doctor(&sessions_dir, &args.model);
+            print_json(&report)?;
+            if report.ready {
+                Ok(())
+            } else {
+                Err(Error::DoctorFailed)
+            }
+        }
         Command::Start(args) => {
             let root = crate::session::run(StartOptions {
                 sessions_dir,
@@ -199,41 +217,62 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
                 model_identity: None,
             })?;
             println!("{}", root.display());
-            return Ok(());
+            Ok(())
         }
         Command::Status => {
-            print_status(&crate::control::current_status(&sessions_dir)?)?;
-            return Ok(());
+            print_json(&crate::control::status_report(&sessions_dir)?)?;
+            Ok(())
         }
         Command::Pause => {
             print_status(&crate::control::request(
                 &sessions_dir,
                 ControlAction::Pause,
             )?)?;
-            return Ok(());
+            Ok(())
         }
         Command::Resume => {
             print_status(&crate::control::request(
                 &sessions_dir,
                 ControlAction::Resume,
             )?)?;
-            return Ok(());
+            Ok(())
         }
         Command::Stop => {
             print_status(&crate::control::request(
                 &sessions_dir,
                 ControlAction::Stop,
             )?)?;
-            return Ok(());
+            Ok(())
         }
-        Command::Export(_) => "export",
-    };
+        Command::Export(args) => {
+            crate::export::export_session(
+                &args.session,
+                args.format.into(),
+                args.output.as_deref(),
+            )?;
+            Ok(())
+        }
+    }
+}
 
-    Err(Error::CommandNotImplemented(name))
+impl From<ExportFormat> for crate::export::Format {
+    fn from(format: ExportFormat) -> Self {
+        match format {
+            ExportFormat::Jsonl => Self::Jsonl,
+            ExportFormat::Text => Self::Text,
+            ExportFormat::Markdown => Self::Markdown,
+            ExportFormat::Srt => Self::Srt,
+            ExportFormat::Vtt => Self::Vtt,
+        }
+    }
 }
 
 fn print_status(status: &crate::domain::SessionStatus) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(status)?);
+    print_json(status)
+}
+
+fn print_json(value: &impl serde::Serialize) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
 }
 

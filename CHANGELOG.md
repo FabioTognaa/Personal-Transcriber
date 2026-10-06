@@ -29,3 +29,11 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
   d'inferenza e metriche ASR persistite per sessione.
 - Benchmark ASR riproducibile con fixture non sensibili, WER/CER, real-time factor,
   picco RSS e report di riferimento per Apple M5.
+- Export derivati dal transcript canonico nei formati JSONL, testo, Markdown, SRT
+  e VTT, con scrittura atomica e protezione dalla sovrascrittura della fonte.
+- Enumerazione dei dispositivi CoreAudio e diagnostica locale di piattaforma,
+  modello, spazio disco, input audio e disponibilità di BlackHole.
+- Report `status` operativo con metadati, percorsi di output e ritardo ASR.
+- Validazione preventiva di percorsi, lingua, configurazioni e spazio disponibile.
+- Finalizzazione recuperabile delle sessioni interrotte da SIGINT o SIGTERM, con
+  stato ed evento di errore espliciti.

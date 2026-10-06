@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -159,6 +160,45 @@ fn stop_drains_audio_already_captured_in_the_bounded_queue() {
         u32::try_from(completed.audio_position.0 * 16_000 / 1_000_000)
             .expect("fixture duration fits in u32")
     );
+}
+
+#[test]
+fn shutdown_signal_finalizes_a_readable_partial_session() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let sessions_dir = temporary.path().join("sessions");
+    let worker_sessions = sessions_dir.clone();
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let worker_shutdown = Arc::clone(&shutdown);
+    let worker = thread::spawn(move || {
+        session::run_with_sink_until(
+            options(worker_sessions),
+            &mut NullSegmentSink,
+            &worker_shutdown,
+        )
+    });
+
+    wait_for_position(&sessions_dir, 100_000);
+    shutdown.store(true, Ordering::Relaxed);
+    let error = worker
+        .join()
+        .expect("session worker should not panic")
+        .expect_err("signalled session should report interruption");
+    let report = control::status_report(&sessions_dir).expect("session should remain readable");
+    let root = report.session_root;
+    let status = control::current_status(&sessions_dir).expect("status should remain readable");
+
+    assert!(matches!(
+        error,
+        live_transcript::Error::SessionInterrupted(path) if path == root
+    ));
+    assert_eq!(status.state, SessionState::Failed);
+    assert!(status.audio_position < TimestampUs(1_200_000));
+    assert!(wav_samples(&root.join("audio").join(MIXED_AUDIO_FILE)) > 0);
+    assert!(matches!(
+        read_events(&root.join(EVENTS_FILE)).last(),
+        Some(SessionEvent::Error { message, .. })
+            if message == "termination signal received; partial session finalized"
+    ));
 }
 
 fn options(sessions_dir: PathBuf) -> StartOptions {
