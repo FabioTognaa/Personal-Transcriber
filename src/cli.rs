@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::domain::ControlAction;
+use crate::domain::{ControlAction, SegmenterConfig};
 use crate::session::StartOptions;
 use crate::{Error, Result};
 
@@ -66,6 +66,34 @@ pub struct StartArgs {
     /// Spoken language. The v1 implementation supports Italian only.
     #[arg(long, default_value = "it")]
     pub language: String,
+
+    /// RMS threshold above which a PCM chunk is treated as voice.
+    #[arg(long, default_value_t = 0.02)]
+    pub vad_threshold: f32,
+
+    /// Consecutive voice required to start a segment.
+    #[arg(long, default_value_t = 60)]
+    pub vad_start_ms: u64,
+
+    /// Consecutive silence required to end a segment.
+    #[arg(long, default_value_t = 800)]
+    pub vad_end_ms: u64,
+
+    /// Audio retained before detected speech.
+    #[arg(long, default_value_t = 200)]
+    pub vad_pre_roll_ms: u64,
+
+    /// Audio retained after the last detected speech.
+    #[arg(long, default_value_t = 200)]
+    pub vad_post_roll_ms: u64,
+
+    /// Minimum voiced duration accepted as a segment.
+    #[arg(long, default_value_t = 100)]
+    pub vad_min_speech_ms: u64,
+
+    /// Maximum segment duration before a deterministic split.
+    #[arg(long, default_value_t = 30_000)]
+    pub vad_max_segment_ms: u64,
 }
 
 #[derive(Debug, Args)]
@@ -103,6 +131,15 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
                 language: args.language,
                 microphone: args.microphone,
                 system_audio: args.system_audio,
+                segmenter: SegmenterConfig {
+                    energy_threshold: args.vad_threshold,
+                    start_trigger_ms: args.vad_start_ms,
+                    end_silence_ms: args.vad_end_ms,
+                    pre_roll_ms: args.vad_pre_roll_ms,
+                    post_roll_ms: args.vad_post_roll_ms,
+                    min_speech_ms: args.vad_min_speech_ms,
+                    max_segment_ms: args.vad_max_segment_ms,
+                },
             })?;
             println!("{}", root.display());
             return Ok(());

@@ -22,6 +22,9 @@ pub enum Error {
     #[error("unsupported WAV input: {0}")]
     UnsupportedWav(String),
 
+    #[error("invalid segmenter configuration: {0}")]
+    InvalidSegmenterConfig(String),
+
     #[error("timed out waiting for the session to apply a control request")]
     ControlTimeout,
 
@@ -33,6 +36,9 @@ pub enum Error {
 
     #[error("audio worker terminated unexpectedly")]
     AudioWorkerPanicked,
+
+    #[error("segmentation worker terminated unexpectedly")]
+    SegmentationWorkerPanicked,
 
     #[error("the system clock is before the Unix epoch")]
     SystemClockBeforeUnixEpoch,

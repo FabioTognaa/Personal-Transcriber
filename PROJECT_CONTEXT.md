@@ -138,6 +138,14 @@ indefinitamente lunghi.
 All'inizio si preferisce un VAD semplice e misurabile; il passaggio a WebRTC VAD è
 giustificato da benchmark, non dall'astrazione.
 
+La configurazione VAD effettiva viene registrata in `session.json`. `status.json`
+espone profondità corrente e massima della coda di segmentazione, durata classificata
+come voce o silenzio, segmenti finalizzati o scartati e split per durata massima.
+L'audio originale viene scritto prima dell'invio al worker VAD. La coda resta
+bounded e non applica una politica di scarto implicita: se si satura, la
+segmentazione viene ricostruita dal WAV già persistito rispettando gli intervalli
+di pausa. `status.json` rende osservabile questa modalità differita.
+
 ### Trascrizione
 
 Il backend ASR previsto è `whisper.cpp`, richiamato da Rust attraverso

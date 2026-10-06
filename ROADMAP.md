@@ -65,6 +65,8 @@ locale come sorgente, letto a velocità reale.
 
 ## M2 — Segmentazione vocale
 
+**Stato:** completata il 6 ottobre 2026.
+
 **Obiettivo:** trasformare lo stream PCM in segmenti di parlato riproducibili.
 
 **Implementazione**

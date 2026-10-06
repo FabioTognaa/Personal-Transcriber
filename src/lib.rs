@@ -5,6 +5,7 @@ pub mod domain;
 pub mod error;
 pub mod logging;
 pub mod schema;
+pub mod segment;
 pub mod session;
 pub mod storage;
 

@@ -6,6 +6,31 @@ use uuid::Uuid;
 pub const TARGET_SAMPLE_RATE_HZ: u32 = 16_000;
 pub const TARGET_CHANNELS: u16 = 1;
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SegmenterConfig {
+    pub energy_threshold: f32,
+    pub start_trigger_ms: u64,
+    pub end_silence_ms: u64,
+    pub pre_roll_ms: u64,
+    pub post_roll_ms: u64,
+    pub min_speech_ms: u64,
+    pub max_segment_ms: u64,
+}
+
+impl Default for SegmenterConfig {
+    fn default() -> Self {
+        Self {
+            energy_threshold: 0.02,
+            start_trigger_ms: 60,
+            end_silence_ms: 800,
+            pre_roll_ms: 200,
+            post_roll_ms: 200,
+            min_speech_ms: 100,
+            max_segment_ms: 30_000,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct TimestampUs(pub u64);
@@ -26,6 +51,29 @@ pub struct PcmChunk {
     pub sample_rate_hz: u32,
     pub channels: u16,
     pub samples: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpeechSegment {
+    pub start: TimestampUs,
+    pub end: TimestampUs,
+    pub samples: Vec<f32>,
+}
+
+impl SpeechSegment {
+    #[must_use]
+    pub fn duration_us(&self) -> u64 {
+        self.end.0.saturating_sub(self.start.0)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SegmentationMetrics {
+    pub speech_duration_us: u64,
+    pub silence_duration_us: u64,
+    pub segments_finalized: u64,
+    pub segments_discarded: u64,
+    pub max_duration_splits: u64,
 }
 
 impl PcmChunk {
@@ -51,7 +99,7 @@ pub enum SessionState {
     Failed,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionConfig {
     pub language: String,
     pub model_path: Option<PathBuf>,
@@ -60,6 +108,7 @@ pub struct SessionConfig {
     pub system_device: Option<String>,
     pub sample_rate_hz: u32,
     pub channels: u16,
+    pub segmenter: SegmenterConfig,
 }
 
 impl SessionConfig {
@@ -73,11 +122,12 @@ impl SessionConfig {
             system_device: None,
             sample_rate_hz: TARGET_SAMPLE_RATE_HZ,
             channels: TARGET_CHANNELS,
+            segmenter: SegmenterConfig::default(),
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SessionMetadata {
     pub schema_version: u32,
     pub session_id: Uuid,
@@ -155,6 +205,11 @@ pub struct SessionStatus {
     pub queue_depth: usize,
     pub queue_capacity: usize,
     pub max_queue_depth: usize,
+    pub segmentation_queue_depth: usize,
+    pub segmentation_queue_capacity: usize,
+    pub max_segmentation_queue_depth: usize,
+    pub segmentation_replay_required: bool,
+    pub segmentation: SegmentationMetrics,
     pub applied_control_generation: u64,
 }
 

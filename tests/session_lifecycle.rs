@@ -7,32 +7,33 @@ use std::time::{Duration, Instant};
 use live_transcript::Result;
 use live_transcript::control;
 use live_transcript::domain::{
-    ControlAction, PcmChunk, SessionEvent, SessionState, SessionStatus, TimestampUs,
+    ControlAction, SegmenterConfig, SessionEvent, SessionState, SessionStatus, SpeechSegment,
+    TimestampUs,
 };
 use live_transcript::schema::{EVENTS_FILE, MIXED_AUDIO_FILE};
-use live_transcript::session::{self, StartOptions, TranscriptionSink};
+use live_transcript::session::{self, SegmentSink, StartOptions};
 
 const FIXTURE: &str = "tests/fixtures/m1_stream.wav";
 
 #[derive(Clone)]
 struct RecordingSink {
-    starts: Arc<Mutex<Vec<TimestampUs>>>,
+    ranges: Arc<Mutex<Vec<(TimestampUs, TimestampUs)>>>,
 }
 
-impl TranscriptionSink for RecordingSink {
-    fn accept(&mut self, chunk: &PcmChunk) -> Result<()> {
-        self.starts
+impl SegmentSink for RecordingSink {
+    fn accept(&mut self, segment: &SpeechSegment) -> Result<()> {
+        self.ranges
             .lock()
             .expect("sink mutex poisoned")
-            .push(chunk.start);
+            .push((segment.start, segment.end));
         Ok(())
     }
 }
 
 struct SlowSink;
 
-impl TranscriptionSink for SlowSink {
-    fn accept(&mut self, _chunk: &PcmChunk) -> Result<()> {
+impl SegmentSink for SlowSink {
+    fn accept(&mut self, _segment: &SpeechSegment) -> Result<()> {
         thread::sleep(Duration::from_millis(100));
         Ok(())
     }
@@ -47,7 +48,7 @@ fn realtime_session_persists_all_audio_and_honors_pause_resume() {
     let worker_sessions = sessions_dir.clone();
     let worker = thread::spawn(move || {
         let mut sink = RecordingSink {
-            starts: worker_accepted,
+            ranges: worker_accepted,
         };
         session::run_with_sink(options(worker_sessions), &mut sink)
     });
@@ -70,6 +71,9 @@ fn realtime_session_persists_all_audio_and_honors_pause_resume() {
     assert_eq!(status.audio_position, TimestampUs(1_200_000));
     assert_eq!(status.chunks_written, 60);
     assert!(status.max_queue_depth <= status.queue_capacity);
+    assert!(status.max_segmentation_queue_depth <= status.segmentation_queue_capacity);
+    assert!(!status.segmentation_replay_required);
+    assert!(status.segmentation.segments_finalized > 0);
 
     let output = hound::WavReader::open(root.join("audio").join(MIXED_AUDIO_FILE))
         .expect("output WAV should be readable");
@@ -83,15 +87,16 @@ fn realtime_session_persists_all_audio_and_honors_pause_resume() {
     assert!(pause_at < resume_at);
 
     let accepted = accepted.lock().expect("sink mutex poisoned");
+    assert!(!accepted.is_empty());
     assert!(
         accepted
             .iter()
-            .all(|start| start.0 < pause_at.0 || start.0 >= resume_at.0),
-        "paused chunks must not reach the transcription sink"
+            .all(|(start, end)| end.0 <= pause_at.0 || start.0 >= resume_at.0),
+        "segments must not span the transcription pause"
     );
     assert!(
-        accepted.windows(2).all(|pair| pair[0] < pair[1]),
-        "transcription-eligible chunk timestamps must be monotonic"
+        accepted.windows(2).all(|pair| pair[0].0 < pair[1].0),
+        "speech segment timestamps must be monotonic"
     );
     assert!(
         fs::read_to_string(root.join("transcript.jsonl"))
@@ -164,6 +169,7 @@ fn options(sessions_dir: PathBuf) -> StartOptions {
         language: "it".to_owned(),
         microphone: None,
         system_audio: None,
+        segmenter: SegmenterConfig::default(),
     }
 }
 

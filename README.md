@@ -4,9 +4,9 @@ CLI locale per registrare e trascrivere riunioni in corso. La prima versione è
 destinata a macOS Apple Silicon, usa BlackHole per leggere l'audio della call e
 conserva audio e trascrizioni esclusivamente sul computer dell'utente.
 
-Il progetto è in sviluppo iniziale. Può già simulare una sessione riproducendo un
-file WAV in tempo reale; cattura live, segmentazione e ASR non sono ancora
-implementati.
+Il progetto è in sviluppo iniziale. Può simulare una sessione riproducendo un file
+WAV in tempo reale e segmentare localmente il parlato con un VAD energetico
+deterministico. Cattura live e ASR non sono ancora implementati.
 
 ## Principi
 
@@ -44,9 +44,17 @@ cargo run -- resume
 cargo run -- stop
 ```
 
-La pausa riguarda solo il futuro sink di trascrizione: l'audio continua a essere
-scritto. In M1 `transcript.jsonl` resta intenzionalmente vuoto perché non esiste
-ancora un motore ASR. I comandi `devices`, `doctor` ed `export` restano stub.
+La pausa riguarda solo la segmentazione e la futura trascrizione: l'audio continua
+a essere scritto. Il segmento pendente viene chiuso quando inizia la pausa e
+l'elaborazione riparte senza attraversare l'intervallo sospeso.
+
+Il VAD usa chunk mono 16 kHz, soglia RMS, isteresi di avvio, preroll/postroll,
+silenzio finale e durata massima. Le soglie sono configurabili tramite le opzioni
+`--vad-*` mostrate da `start --help`; i valori effettivi sono salvati in
+`session.json`. Coda e metriche di segmentazione sono visibili in `status.json`.
+
+In M2 `transcript.jsonl` resta intenzionalmente vuoto perché non esiste ancora un
+motore ASR. I comandi `devices`, `doctor` ed `export` restano stub.
 
 ## Documentazione
 

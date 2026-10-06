@@ -19,3 +19,7 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
   incrementale.
 - Controllo tra processi di stato, pausa, ripresa e stop tramite file locali
   atomici, con metriche della coda bounded.
+- Segmentazione vocale deterministica con soglia RMS configurabile, isteresi,
+  preroll/postroll, silenzio finale e limite massimo di durata.
+- Worker e coda bounded dedicati alla segmentazione, con metriche osservabili e
+  flush dei segmenti pendenti durante pausa e arresto.
