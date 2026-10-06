@@ -8,7 +8,6 @@ pub const STATUS_FILE: &str = "status.json";
 pub const CONTROL_FILE: &str = "control.json";
 pub const CURRENT_SESSION_FILE: &str = "current-session.json";
 pub const AUDIO_DIRECTORY: &str = "audio";
-pub const LOG_DIRECTORY: &str = "logs";
 pub const MIXED_AUDIO_FILE: &str = "mixed.wav";
 pub const MICROPHONE_AUDIO_FILE: &str = "microphone.wav";
 pub const SYSTEM_AUDIO_FILE: &str = "system.wav";
@@ -25,7 +24,6 @@ pub struct SessionPaths {
     pub microphone_audio: PathBuf,
     pub system_audio: PathBuf,
     pub audio: PathBuf,
-    pub logs: PathBuf,
 }
 
 impl SessionPaths {
@@ -43,7 +41,6 @@ impl SessionPaths {
             microphone_audio: root.join(AUDIO_DIRECTORY).join(MICROPHONE_AUDIO_FILE),
             system_audio: root.join(AUDIO_DIRECTORY).join(SYSTEM_AUDIO_FILE),
             audio: root.join(AUDIO_DIRECTORY),
-            logs: root.join(LOG_DIRECTORY),
             root,
         }
     }

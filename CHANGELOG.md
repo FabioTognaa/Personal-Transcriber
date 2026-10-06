@@ -7,6 +7,14 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
 ## [Unreleased]
 
+### Changed
+
+- Le cartelle di sessione usano l'ora locale di inizio (`YYYY-MM-DD_HH-MM-SS`).
+
+### Removed
+
+- Directory `logs/` creata e mai usata in ogni sessione.
+
 ### Added
 
 - Workflow GitHub Actions su macOS per formattazione, lint, test e build.
@@ -48,6 +56,16 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
   disconnessione e cambi di formato falliscono esplicitamente senza perdita muta.
 - Lock advisory recuperabili dopo crash, recovery esplicito delle sessioni rimaste
   attive e serializzazione dei comandi di controllo concorrenti.
+
+### Fixed
+
+- Propagazione immediata degli errori ASR senza lasciare attiva una sessione che
+  non può più trascrivere.
+- Timeout separati per acknowledgement e finalizzazione di `stop`.
+- Recovery delle sessioni interrotte prima della creazione di `status.json` e
+  riparazione delle code JSONL incomplete.
+- Export parziali resi espliciti e selezione obbligatoria quando sono visibili più
+  dispositivi BlackHole.
 - Percorsi di sessione assoluti e validazione di contenimento prima di operazioni
   di controllo.
 - Protezione di tutti gli artefatti canonici da sovrascritture tramite export.

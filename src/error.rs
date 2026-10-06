@@ -70,6 +70,9 @@ pub enum Error {
     #[error("timed out waiting for the session to apply a control request")]
     ControlTimeout,
 
+    #[error("the control request was applied, but session finalization timed out")]
+    ControlCompletionTimeout,
+
     #[error("operation interrupted before the session started")]
     OperationInterrupted,
 

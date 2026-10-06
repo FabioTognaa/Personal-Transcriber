@@ -84,20 +84,37 @@ impl LiveAudioConfig {
 
         let system = match system_name {
             Some(name) => find_input_device(&host, name)?,
-            None => host
-                .input_devices()
-                .map_err(audio_error)?
-                .find(|device| {
-                    device
-                        .name()
-                        .is_ok_and(|name| name.to_ascii_lowercase().contains("blackhole"))
-                })
-                .ok_or_else(|| {
-                    Error::Audio(
-                        "no BlackHole input found; pass --system-audio with an exact device name"
-                            .to_owned(),
-                    )
-                })?,
+            None => {
+                let mut matches = host
+                    .input_devices()
+                    .map_err(audio_error)?
+                    .filter_map(|device| {
+                        let name = device.name().ok()?;
+                        name.to_ascii_lowercase()
+                            .contains("blackhole")
+                            .then_some((name, device))
+                    })
+                    .collect::<Vec<_>>();
+                match matches.len() {
+                    1 => matches.pop().expect("one BlackHole device exists").1,
+                    0 => {
+                        return Err(Error::Audio(
+                            "no BlackHole input found; pass --system-audio with an exact device name"
+                                .to_owned(),
+                        ));
+                    }
+                    _ => {
+                        let names = matches
+                            .into_iter()
+                            .map(|(name, _)| format!("`{name}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        return Err(Error::Audio(format!(
+                            "multiple BlackHole inputs found ({names}); pass --system-audio with an exact device name"
+                        )));
+                    }
+                }
+            }
         };
         let system_name = device_name(&system)?;
         if microphone_name == system_name {

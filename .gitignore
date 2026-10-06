@@ -2,9 +2,9 @@
 /target/
 
 # Local application data and recordings
-/sessions/
+/sessions/*
+!/sessions/README.md
 /models/
-/logs/
 
 # Local IDE and editor files
 .DS_Store

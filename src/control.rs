@@ -13,6 +13,7 @@ use crate::storage::{CurrentSession, ExclusiveFileLock, atomic_write_json, read_
 use crate::{Error, Result};
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
+const STOP_COMPLETION_TIMEOUT: Duration = Duration::from_secs(60);
 const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONTROL_LOCK_FILE: &str = ".control.lock";
 
@@ -62,23 +63,20 @@ pub fn request(sessions_dir: &Path, action: ControlAction) -> Result<SessionStat
     let (_, paths) = current_session(sessions_dir)?;
     let status: SessionStatus = read_json(&paths.status)?;
 
-    if status.state == SessionState::Completed {
-        if action == ControlAction::Stop {
-            return Ok(status);
+    match (action, status.state) {
+        (ControlAction::Stop, SessionState::Completed)
+        | (ControlAction::Pause, SessionState::TranscriptionPaused)
+        | (ControlAction::Resume, SessionState::Running) => return Ok(status),
+        (ControlAction::Stop, SessionState::Stopping) => return wait_for_completed(&paths),
+        (ControlAction::Pause, SessionState::Running)
+        | (ControlAction::Resume, SessionState::TranscriptionPaused)
+        | (ControlAction::Stop, SessionState::Running | SessionState::TranscriptionPaused) => {}
+        _ => {
+            return Err(Error::InvalidControlState {
+                action,
+                state: status.state,
+            });
         }
-        return Err(Error::InvalidControlState {
-            action,
-            state: status.state,
-        });
-    }
-    if status.state == SessionState::Failed {
-        return Err(Error::InvalidControlState {
-            action,
-            state: status.state,
-        });
-    }
-    if status.state == SessionState::Stopping && action == ControlAction::Stop {
-        return wait_for_completed(&paths);
     }
 
     let pending_generation = if paths.control.exists() {
@@ -104,12 +102,27 @@ pub fn request(sessions_dir: &Path, action: ControlAction) -> Result<SessionStat
         let updated: SessionStatus = read_json(&paths.status)?;
         if updated.applied_control_generation >= generation {
             if action == ControlAction::Stop {
-                return wait_for_completed_until(&paths, deadline);
+                return wait_for_completed(&paths);
             }
-            return Ok(updated);
+            if control_action_satisfied(action, updated.state) {
+                return Ok(updated);
+            }
+            return Err(Error::InvalidControlState {
+                action,
+                state: updated.state,
+            });
         }
         if updated.state == SessionState::Completed && action == ControlAction::Stop {
             return Ok(updated);
+        }
+        if matches!(
+            updated.state,
+            SessionState::Completed | SessionState::Failed
+        ) {
+            return Err(Error::InvalidControlState {
+                action,
+                state: updated.state,
+            });
         }
         thread::sleep(CONTROL_POLL_INTERVAL);
     }
@@ -129,7 +142,7 @@ fn acquire_control_lock(sessions_dir: &Path, deadline: Instant) -> Result<Exclus
 }
 
 fn wait_for_completed(paths: &SessionPaths) -> Result<SessionStatus> {
-    wait_for_completed_until(paths, Instant::now() + CONTROL_TIMEOUT)
+    wait_for_completed_until(paths, Instant::now() + STOP_COMPLETION_TIMEOUT)
 }
 
 fn wait_for_completed_until(paths: &SessionPaths, deadline: Instant) -> Result<SessionStatus> {
@@ -146,7 +159,19 @@ fn wait_for_completed_until(paths: &SessionPaths, deadline: Instant) -> Result<S
         }
         thread::sleep(CONTROL_POLL_INTERVAL);
     }
-    Err(Error::ControlTimeout)
+    Err(Error::ControlCompletionTimeout)
+}
+
+fn control_action_satisfied(action: ControlAction, state: SessionState) -> bool {
+    matches!(
+        (action, state),
+        (ControlAction::Pause, SessionState::TranscriptionPaused)
+            | (ControlAction::Resume, SessionState::Running)
+            | (
+                ControlAction::Stop,
+                SessionState::Stopping | SessionState::Completed
+            )
+    )
 }
 
 fn current_session(sessions_dir: &Path) -> Result<(CurrentSession, SessionPaths)> {

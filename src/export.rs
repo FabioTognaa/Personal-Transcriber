@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
-use crate::domain::{SessionMetadata, TimestampUs, TranscriptSegment};
+use crate::domain::{SessionMetadata, SessionState, TimestampUs, TranscriptSegment};
 use crate::schema::{SCHEMA_VERSION, SESSION_METADATA_FILE, SessionPaths, TRANSCRIPT_FILE};
 use crate::storage::read_json;
 use crate::{Error, Result};
@@ -18,7 +18,12 @@ pub enum Format {
     Vtt,
 }
 
-pub fn export_session(session: &Path, format: Format, output: Option<&Path>) -> Result<()> {
+pub fn export_session(
+    session: &Path,
+    format: Format,
+    output: Option<&Path>,
+    allow_partial: bool,
+) -> Result<()> {
     if !session.is_dir() {
         return Err(Error::InvalidPath {
             label: "session",
@@ -33,6 +38,12 @@ pub fn export_session(session: &Path, format: Format, output: Option<&Path>) -> 
         return Err(Error::InvalidExport(format!(
             "unsupported session schema version {}; expected {SCHEMA_VERSION}",
             metadata.schema_version
+        )));
+    }
+    if metadata.state != SessionState::Completed && !allow_partial {
+        return Err(Error::InvalidExport(format!(
+            "session is {:?}; pass --allow-partial to export a non-completed transcript",
+            metadata.state
         )));
     }
     let segments = read_segments(&transcript, metadata.session_id)?;

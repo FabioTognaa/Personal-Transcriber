@@ -55,6 +55,16 @@ impl SegmentSink for FailingStartSink {
     }
 }
 
+struct FailingAcceptSink;
+
+impl SegmentSink for FailingAcceptSink {
+    fn accept(&mut self, _segment: &SpeechSegment) -> Result<()> {
+        Err(personal_transcriber::Error::Asr(
+            "intentional inference failure".to_owned(),
+        ))
+    }
+}
+
 #[test]
 fn realtime_session_persists_all_audio_and_honors_pause_resume() {
     let temporary = tempfile::tempdir().expect("temp directory should be created");
@@ -235,6 +245,25 @@ fn startup_failure_finalizes_files_and_marks_the_session_failed() {
 }
 
 #[test]
+fn inference_failure_stops_capture_and_marks_the_session_failed() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let sessions_dir = temporary.path().join("sessions");
+    let mut start_options = options(sessions_dir.clone());
+    start_options.segmenter.max_segment_ms = 200;
+
+    let error = session::run_with_sink(start_options, &mut FailingAcceptSink)
+        .expect_err("inference failure should stop the session");
+    let report = control::status_report(&sessions_dir).expect("failed session should be readable");
+
+    assert!(
+        matches!(error, personal_transcriber::Error::Asr(message) if message == "intentional inference failure")
+    );
+    assert_eq!(report.runtime.state, SessionState::Failed);
+    assert!(report.runtime.audio_position < TimestampUs(1_200_000));
+    assert!(wav_samples(&report.mixed_audio) > 0);
+}
+
+#[test]
 fn stale_active_session_and_lock_file_are_recovered_after_a_crash() {
     let temporary = tempfile::tempdir().expect("temp directory should be created");
     let sessions_dir = temporary.path().join("sessions");
@@ -287,6 +316,35 @@ fn stale_active_session_and_lock_file_are_recovered_after_a_crash() {
 
     assert_eq!(recovered.state, SessionState::Failed);
     assert_ne!(new_root, stale_root);
+}
+
+#[test]
+fn stale_starting_session_without_status_is_recovered() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let sessions_dir = temporary.path().join("sessions");
+    let stale_id = uuid::Uuid::new_v4();
+    let metadata = SessionMetadata {
+        schema_version: SCHEMA_VERSION,
+        session_id: stale_id,
+        state: SessionState::Starting,
+        started_at_unix_ms: 1,
+        ended_at_unix_ms: None,
+        config: SessionConfig::italian(None),
+    };
+    let storage =
+        SessionStorage::create(&sessions_dir, &metadata).expect("stale storage should be created");
+    let stale_root = storage.paths.root.clone();
+    drop(storage);
+
+    run_without_asr(options(sessions_dir)).expect("new session should recover");
+    let recovered: SessionStatus =
+        read_json(&stale_root.join("status.json")).expect("recovered status should be created");
+    let recovered_metadata: SessionMetadata =
+        read_json(&stale_root.join("session.json")).expect("metadata should remain readable");
+
+    assert_eq!(recovered.state, SessionState::Failed);
+    assert_eq!(recovered_metadata.state, SessionState::Failed);
+    assert!(recovered_metadata.ended_at_unix_ms.is_some());
 }
 
 #[test]

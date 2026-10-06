@@ -26,7 +26,7 @@ fn every_export_is_derived_from_the_canonical_transcript() {
     ];
     for (format, extension) in cases {
         let output = temporary.path().join(format!("transcript.{extension}"));
-        export::export_session(&session, format, Some(&output))
+        export::export_session(&session, format, Some(&output), false)
             .expect("canonical transcript should export");
         let rendered = fs::read_to_string(&output).expect("export should be readable");
         assert!(
@@ -45,6 +45,36 @@ fn every_export_is_derived_from_the_canonical_transcript() {
             assert_eq!(decoded.text, RAW_TEXT);
         }
     }
+}
+
+#[test]
+fn partial_export_requires_explicit_opt_in() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let session = temporary.path().join("session");
+    fs::create_dir(&session).expect("session directory should be created");
+    write_session(&session);
+    let metadata_path = session.join(SESSION_METADATA_FILE);
+    let mut metadata: SessionMetadata =
+        serde_json::from_slice(&fs::read(&metadata_path).expect("metadata should be readable"))
+            .expect("metadata should deserialize");
+    metadata.state = SessionState::Failed;
+    fs::write(
+        metadata_path,
+        serde_json::to_vec_pretty(&metadata).expect("metadata should serialize"),
+    )
+    .expect("metadata should be updated");
+
+    assert!(matches!(
+        export::export_session(&session, Format::Text, None, false),
+        Err(personal_transcriber::Error::InvalidExport(_))
+    ));
+    export::export_session(
+        &session,
+        Format::Text,
+        Some(&temporary.path().join("partial.txt")),
+        true,
+    )
+    .expect("explicit partial export should succeed");
 }
 
 fn write_session(session: &Path) {

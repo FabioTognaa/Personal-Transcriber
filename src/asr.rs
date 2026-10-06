@@ -86,54 +86,63 @@ impl<E: AsrEngine> SegmentSink for TranscribingSink<E> {
         let transcript_path = transcript_path.to_path_buf();
         let status = Arc::clone(&self.status);
         self.worker = Some(thread::spawn(move || {
-            let mut writer = TranscriptWriter::open(&transcript_path)?;
-            let mut completed = std::collections::HashSet::new();
-            while let Ok(command) = receiver.recv() {
+            let result = (|| -> Result<()> {
+                let mut writer = TranscriptWriter::open(&transcript_path)?;
+                let mut completed = std::collections::HashSet::new();
+                while let Ok(command) = receiver.recv() {
+                    status
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .queue_depth = receiver.len();
+                    let AsrCommand::Segment(segment) = command else {
+                        return Ok(());
+                    };
+                    if !completed.insert((segment.start, segment.end)) {
+                        continue;
+                    }
+                    let output = engine.transcribe(&segment, &language, &inference)?;
+                    writer.append(&TranscriptSegment {
+                        schema_version: SCHEMA_VERSION,
+                        segment_id: Uuid::new_v4(),
+                        session_id,
+                        start: segment.start,
+                        end: segment.end,
+                        text: output.text,
+                        language: language.clone(),
+                        model: model.name.clone(),
+                        model_sha256: model.sha256.clone(),
+                        inference: inference.clone(),
+                    })?;
+                    let mut current = status
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
+                    current.metrics.segments_transcribed =
+                        current.metrics.segments_transcribed.saturating_add(1);
+                    current.metrics.audio_duration_us = current
+                        .metrics
+                        .audio_duration_us
+                        .saturating_add(segment.duration_us());
+                    current.metrics.inference_duration_us = current
+                        .metrics
+                        .inference_duration_us
+                        .saturating_add(output.inference_duration_us);
+                    current.metrics.last_segment_end = segment.end;
+                    current.metrics.real_time_factor_milli = current
+                        .metrics
+                        .inference_duration_us
+                        .saturating_mul(1_000)
+                        .checked_div(current.metrics.audio_duration_us)
+                        .unwrap_or(0);
+                }
+                Ok(())
+            })();
+            if let Err(error) = &result {
                 status
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .queue_depth = receiver.len();
-                let AsrCommand::Segment(segment) = command else {
-                    return Ok(());
-                };
-                if !completed.insert((segment.start, segment.end)) {
-                    continue;
-                }
-                let output = engine.transcribe(&segment, &language, &inference)?;
-                writer.append(&TranscriptSegment {
-                    schema_version: SCHEMA_VERSION,
-                    segment_id: Uuid::new_v4(),
-                    session_id,
-                    start: segment.start,
-                    end: segment.end,
-                    text: output.text,
-                    language: language.clone(),
-                    model: model.name.clone(),
-                    model_sha256: model.sha256.clone(),
-                    inference: inference.clone(),
-                })?;
-                let mut current = status
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                current.metrics.segments_transcribed =
-                    current.metrics.segments_transcribed.saturating_add(1);
-                current.metrics.audio_duration_us = current
-                    .metrics
-                    .audio_duration_us
-                    .saturating_add(segment.duration_us());
-                current.metrics.inference_duration_us = current
-                    .metrics
-                    .inference_duration_us
-                    .saturating_add(output.inference_duration_us);
-                current.metrics.last_segment_end = segment.end;
-                current.metrics.real_time_factor_milli = current
-                    .metrics
-                    .inference_duration_us
-                    .saturating_mul(1_000)
-                    .checked_div(current.metrics.audio_duration_us)
-                    .unwrap_or(0);
+                    .error = Some(error.to_string());
             }
-            Ok(())
+            result
         }));
         self.sender = Some(sender);
         Ok(())

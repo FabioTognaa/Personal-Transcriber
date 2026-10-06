@@ -6,7 +6,7 @@ fn main() {
     personal_transcriber::logging::init(cli.verbose);
 
     if let Err(error) = cli::execute(cli.command, cli.sessions_dir) {
-        tracing::error!(%error);
+        eprintln!("error: {error}");
         std::process::exit(1);
     }
 }

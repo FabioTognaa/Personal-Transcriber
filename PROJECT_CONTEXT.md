@@ -181,7 +181,7 @@ e mai come default.
 Una sessione è una directory indipendente, ad esempio:
 
 ```text
-sessions/2026-10-06T121500+0200/
+sessions/2026-10-07_01-17-03/
   session.json
   audio/
     mixed.wav
@@ -189,7 +189,6 @@ sessions/2026-10-06T121500+0200/
     system.wav
   events.jsonl
   transcript.jsonl
-  logs/
 ```
 
 I nomi concreti possono evolvere, ma valgono i principi: scrittura incrementale,

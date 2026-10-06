@@ -19,7 +19,8 @@ use crate::live_audio::{LiveAudioChunk, LiveAudioConfig};
 use crate::schema::{CURRENT_SESSION_FILE, SCHEMA_VERSION};
 use crate::segment::Segmenter;
 use crate::storage::{
-    CurrentSession, ExclusiveFileLock, SessionStorage, atomic_write_json, read_json, unix_time_ms,
+    CurrentSession, ExclusiveFileLock, SessionStorage, atomic_write_json, read_json,
+    repair_jsonl_tail, unix_time_ms,
 };
 use crate::{Error, Result};
 
@@ -175,12 +176,13 @@ pub trait SegmentSink {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct SegmentSinkStatus {
     pub queue_depth: usize,
     pub queue_capacity: usize,
     pub max_queue_depth: usize,
     pub metrics: AsrMetrics,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -346,18 +348,21 @@ fn run_with_sink_internal(
         let producer = scope.spawn(move || source.run(sender, &producer_max, &producer_shutdown));
 
         let worker_metrics = Arc::clone(&segmentation_metrics);
+        let worker_sink_status = Arc::clone(&sink_status_handle);
         let segmentation_worker = scope.spawn(move || {
             let result = run_segmentation_worker(
                 segmenter,
                 segmentation_receiver,
                 &mut *sink,
                 &worker_metrics,
+                &worker_sink_status,
             );
             (result, sink)
         });
 
         let mut segment_drain = true;
         let mut segmentation_replay_required = false;
+        let mut segmentation_worker_ended_early = false;
         let mut eligible_ranges = Vec::new();
         loop {
             let previous_state = status.state;
@@ -377,6 +382,18 @@ fn run_with_sink_internal(
             }
             if status.state == SessionState::Stopping {
                 segment_drain = previous_state == SessionState::Running;
+                source_shutdown.store(true, Ordering::Relaxed);
+                break;
+            }
+            if sink_error(&sink_status_handle).is_some() {
+                segmentation_worker_ended_early = true;
+                segment_drain = false;
+                source_shutdown.store(true, Ordering::Relaxed);
+                break;
+            }
+            if segmentation_worker.is_finished() {
+                segmentation_worker_ended_early = true;
+                segment_drain = false;
                 source_shutdown.store(true, Ordering::Relaxed);
                 break;
             }
@@ -481,16 +498,18 @@ fn run_with_sink_internal(
         }
         drop(receiver);
 
-        segmentation_sender
-            .send(SegmentationCommand::Flush)
-            .map_err(|_| Error::SegmentationWorkerPanicked)?;
-        segmentation_sender
-            .send(if segmentation_replay_required {
-                SegmentationCommand::ShutdownDiscard
-            } else {
-                SegmentationCommand::ShutdownAndEmit
-            })
-            .map_err(|_| Error::SegmentationWorkerPanicked)?;
+        if !segmentation_worker_ended_early {
+            segmentation_sender
+                .send(SegmentationCommand::Flush)
+                .map_err(|_| Error::SegmentationWorkerPanicked)?;
+            segmentation_sender
+                .send(if segmentation_replay_required {
+                    SegmentationCommand::ShutdownDiscard
+                } else {
+                    SegmentationCommand::ShutdownAndEmit
+                })
+                .map_err(|_| Error::SegmentationWorkerPanicked)?;
+        }
         drop(segmentation_sender);
 
         producer.join().map_err(|_| Error::AudioWorkerPanicked)??;
@@ -672,8 +691,12 @@ fn run_segmentation_worker(
     receiver: crossbeam_channel::Receiver<SegmentationCommand>,
     sink: &mut impl SegmentSink,
     shared_metrics: &Mutex<SegmentationMetrics>,
+    sink_status: &Mutex<SegmentSinkStatus>,
 ) -> Result<()> {
     while let Ok(command) = receiver.recv() {
+        if let Some(error) = sink_error(sink_status) {
+            return Err(Error::Asr(error));
+        }
         let (segments, shutdown, emit) = match command {
             SegmentationCommand::Chunk(chunk) => (segmenter.push_chunk(chunk), false, true),
             SegmentationCommand::Flush => (segmenter.flush(), false, true),
@@ -693,6 +716,9 @@ fn run_segmentation_worker(
         }
     }
 
+    if let Some(error) = sink_error(sink_status) {
+        return Err(Error::Asr(error));
+    }
     for segment in &segmenter.flush() {
         sink.accept(segment)?;
     }
@@ -791,13 +817,22 @@ fn refresh_queue_status(
 }
 
 fn refresh_sink_status(status: &mut SessionStatus, sink_status: &Mutex<SegmentSinkStatus>) {
-    let sink_status = *sink_status
+    let sink_status = sink_status
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone();
     status.asr_queue_depth = sink_status.queue_depth;
     status.asr_queue_capacity = sink_status.queue_capacity;
     status.max_asr_queue_depth = sink_status.max_queue_depth;
     status.asr = sink_status.metrics;
+}
+
+fn sink_error(sink_status: &Mutex<SegmentSinkStatus>) -> Option<String> {
+    sink_status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .error
+        .clone()
 }
 
 fn apply_control_if_present(
@@ -867,11 +902,16 @@ fn recover_stale_session(sessions_dir: &Path) -> Result<()> {
     if !paths.is_within(&sessions_dir) || paths.root == sessions_dir {
         return Err(Error::InvalidSessionPath(paths.root));
     }
-    let status_path = &paths.status;
-    if !status_path.exists() {
-        return Ok(());
+    let mut metadata: SessionMetadata = read_json(&paths.metadata)?;
+    if metadata.session_id != current.session_id {
+        return Err(Error::InvalidSessionPath(paths.root));
     }
-    let mut status: SessionStatus = read_json(status_path)?;
+    let status_path = &paths.status;
+    let mut status: SessionStatus = if status_path.exists() {
+        read_json(status_path)?
+    } else {
+        recovery_status(metadata.session_id, metadata.state)
+    };
     if !matches!(
         status.state,
         SessionState::Starting
@@ -881,9 +921,14 @@ fn recover_stale_session(sessions_dir: &Path) -> Result<()> {
     ) {
         return Ok(());
     }
-    let mut metadata: SessionMetadata = read_json(&paths.metadata)?;
     let ended_at = unix_time_ms()?;
-    let message = "previous process ended without cleanup; stale session recovered".to_owned();
+    let repaired_jsonl = repair_jsonl_tail(&paths.transcript)? | repair_jsonl_tail(&paths.events)?;
+    let message = if repaired_jsonl {
+        "previous process ended without cleanup; stale session recovered and incomplete JSONL tail repaired"
+    } else {
+        "previous process ended without cleanup; stale session recovered"
+    }
+    .to_owned();
     status.state = SessionState::Failed;
     metadata.state = SessionState::Failed;
     metadata.ended_at_unix_ms = Some(ended_at);
@@ -893,19 +938,42 @@ fn recover_stale_session(sessions_dir: &Path) -> Result<()> {
         .create(true)
         .append(true)
         .open(&paths.events)?;
-    serde_json::to_writer(
-        &mut events,
-        &SessionEvent::Error {
-            schema_version: SCHEMA_VERSION,
-            session_id: status.session_id,
-            at: status.audio_position,
-            message,
-        },
-    )?;
+    let mut event = serde_json::to_vec(&SessionEvent::Error {
+        schema_version: SCHEMA_VERSION,
+        session_id: status.session_id,
+        at: status.audio_position,
+        message,
+    })?;
+    event.push(b'\n');
     use std::io::Write;
-    events.write_all(b"\n")?;
+    events.write_all(&event)?;
     events.flush()?;
     Ok(())
+}
+
+fn recovery_status(session_id: Uuid, state: SessionState) -> SessionStatus {
+    SessionStatus {
+        schema_version: SCHEMA_VERSION,
+        session_id,
+        state,
+        audio_position: TimestampUs(0),
+        chunks_written: 0,
+        queue_depth: 0,
+        queue_capacity: QUEUE_CAPACITY,
+        max_queue_depth: 0,
+        segmentation_queue_depth: 0,
+        segmentation_queue_capacity: SEGMENTATION_QUEUE_CAPACITY,
+        max_segmentation_queue_depth: 0,
+        segmentation_replay_required: false,
+        segmentation: SegmentationMetrics::default(),
+        asr_queue_depth: 0,
+        asr_queue_capacity: 0,
+        max_asr_queue_depth: 0,
+        asr_replay_required: false,
+        asr: AsrMetrics::default(),
+        capture: None,
+        applied_control_generation: 0,
+    }
 }
 
 struct RunnerGuard {

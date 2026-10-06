@@ -119,7 +119,7 @@ comando start
    cattura live non ha questi tetti, perché non tiene l'intero audio in RAM.
 7. Controlla lo spazio disco. Per un WAV stima i byte della sessione. Per la live
    pretende almeno 64 MiB liberi, e ricontrolla ogni 5 secondi.
-8. Crea la directory `sessions/<millisecondi-unix>-<8 caratteri dell'uuid>/` e i file
+8. Crea la directory `sessions/YYYY-MM-DD_HH-MM-SS/` (ora locale di inizio) e i file
    vuoti. Lo stato passa a `running` solo dopo che il worker ASR è partito. Se
    quell'avvio fallisce, la sessione viene chiusa come `failed` con i WAV finalizzati,
    anche se sono ancora a zero campioni.
@@ -302,7 +302,7 @@ esce da quella directory viene rifiutato.
 ## I file di una sessione
 
 ```text
-sessions/<id>/
+sessions/YYYY-MM-DD_HH-MM-SS/
   session.json        chi, quando, con quale configurazione
   status.json         fotografia aggiornata mentre gira, e stato finale
   events.jsonl        avvio, pause, riprese, stop, errori
@@ -311,7 +311,6 @@ sessions/<id>/
   audio/mixed.wav     ciò che è stato trascritto
   audio/microphone.wav   solo cattura live
   audio/system.wav       solo cattura live
-  logs/               directory creata, ma i log di diagnostica vanno su stderr
 ```
 
 `session.json` è la descrizione stabile: lingua, percorso del modello, identità

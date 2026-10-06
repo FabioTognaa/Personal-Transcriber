@@ -89,7 +89,7 @@ pub struct StartArgs {
     pub system_audio: Option<String>,
 
     /// Spoken language: `it` or `en`.
-    #[arg(long, default_value = "it")]
+    #[arg(long, default_value = "it", value_parser = ["it", "en"])]
     pub language: String,
 
     /// RMS threshold above which a PCM chunk is treated as voice.
@@ -180,6 +180,10 @@ pub struct ExportArgs {
     /// Destination file. Standard output is used when omitted.
     #[arg(short, long)]
     pub output: Option<PathBuf>,
+
+    /// Permit exporting a transcript from a session that did not complete.
+    #[arg(long)]
+    pub allow_partial: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -277,6 +281,7 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
                 &args.session,
                 args.format.into(),
                 args.output.as_deref(),
+                args.allow_partial,
             )?;
             Ok(())
         }
