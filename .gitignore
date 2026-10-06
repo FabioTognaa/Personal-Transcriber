@@ -1,0 +1,17 @@
+# Rust build output
+/target/
+
+# Local application data and recordings
+/sessions/
+/models/
+/logs/
+
+# Local IDE and editor files
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets and local environment overrides
+.env
+.env.*
+!.env.example
