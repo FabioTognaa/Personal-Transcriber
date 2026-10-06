@@ -6,6 +6,7 @@ pub mod diagnostics;
 pub mod domain;
 pub mod error;
 pub mod export;
+pub mod live_audio;
 pub mod logging;
 pub mod schema;
 pub mod segment;

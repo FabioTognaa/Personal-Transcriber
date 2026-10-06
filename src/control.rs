@@ -9,11 +9,12 @@ use crate::domain::{
     ControlAction, ControlRequest, SessionMetadata, SessionState, SessionStatus, TimestampUs,
 };
 use crate::schema::{CURRENT_SESSION_FILE, SCHEMA_VERSION, SessionPaths};
-use crate::storage::{CurrentSession, atomic_write_json, read_json};
+use crate::storage::{CurrentSession, ExclusiveFileLock, atomic_write_json, read_json};
 use crate::{Error, Result};
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
 const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(10);
+const CONTROL_LOCK_FILE: &str = ".control.lock";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct StatusReport {
@@ -56,6 +57,8 @@ pub fn status_report(sessions_dir: &Path) -> Result<StatusReport> {
 }
 
 pub fn request(sessions_dir: &Path, action: ControlAction) -> Result<SessionStatus> {
+    let deadline = Instant::now() + CONTROL_TIMEOUT;
+    let _control_lock = acquire_control_lock(sessions_dir, deadline)?;
     let (_, paths) = current_session(sessions_dir)?;
     let status: SessionStatus = read_json(&paths.status)?;
 
@@ -63,6 +66,12 @@ pub fn request(sessions_dir: &Path, action: ControlAction) -> Result<SessionStat
         if action == ControlAction::Stop {
             return Ok(status);
         }
+        return Err(Error::InvalidControlState {
+            action,
+            state: status.state,
+        });
+    }
+    if status.state == SessionState::Failed {
         return Err(Error::InvalidControlState {
             action,
             state: status.state,
@@ -91,7 +100,6 @@ pub fn request(sessions_dir: &Path, action: ControlAction) -> Result<SessionStat
         },
     )?;
 
-    let deadline = Instant::now() + CONTROL_TIMEOUT;
     while Instant::now() < deadline {
         let updated: SessionStatus = read_json(&paths.status)?;
         if updated.applied_control_generation >= generation {
@@ -108,6 +116,18 @@ pub fn request(sessions_dir: &Path, action: ControlAction) -> Result<SessionStat
     Err(Error::ControlTimeout)
 }
 
+fn acquire_control_lock(sessions_dir: &Path, deadline: Instant) -> Result<ExclusiveFileLock> {
+    std::fs::create_dir_all(sessions_dir)?;
+    let lock_path = sessions_dir.join(CONTROL_LOCK_FILE);
+    while Instant::now() < deadline {
+        if let Some(lock) = ExclusiveFileLock::try_acquire(&lock_path)? {
+            return Ok(lock);
+        }
+        thread::sleep(CONTROL_POLL_INTERVAL);
+    }
+    Err(Error::ControlTimeout)
+}
+
 fn wait_for_completed(paths: &SessionPaths) -> Result<SessionStatus> {
     wait_for_completed_until(paths, Instant::now() + CONTROL_TIMEOUT)
 }
@@ -118,17 +138,92 @@ fn wait_for_completed_until(paths: &SessionPaths, deadline: Instant) -> Result<S
         if status.state == SessionState::Completed {
             return Ok(status);
         }
+        if status.state == SessionState::Failed {
+            return Err(Error::InvalidControlState {
+                action: ControlAction::Stop,
+                state: status.state,
+            });
+        }
         thread::sleep(CONTROL_POLL_INTERVAL);
     }
     Err(Error::ControlTimeout)
 }
 
 fn current_session(sessions_dir: &Path) -> Result<(CurrentSession, SessionPaths)> {
+    let sessions_dir = std::fs::canonicalize(sessions_dir).map_err(|error| Error::InvalidPath {
+        label: "sessions directory",
+        path: sessions_dir.to_path_buf(),
+        reason: error.to_string(),
+    })?;
     let current_path = sessions_dir.join(CURRENT_SESSION_FILE);
     if !current_path.exists() {
         return Err(Error::NoCurrentSession(sessions_dir.to_path_buf()));
     }
-    let current: CurrentSession = read_json(&current_path)?;
-    let paths = SessionPaths::new(&current.root);
+    let mut current: CurrentSession = read_json(&current_path)?;
+    let candidate = if current.root.is_absolute() {
+        current.root.clone()
+    } else {
+        let name = current
+            .root
+            .file_name()
+            .ok_or_else(|| Error::InvalidSessionPath(current.root.clone()))?;
+        sessions_dir.join(name)
+    };
+    let root = std::fs::canonicalize(&candidate)
+        .map_err(|_| Error::InvalidSessionPath(candidate.clone()))?;
+    let paths = SessionPaths::new(root.clone());
+    if !paths.is_within(&sessions_dir) || root == sessions_dir {
+        return Err(Error::InvalidSessionPath(root));
+    }
+    current.root = paths.root.clone();
     Ok((current, paths))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_session_rejects_a_root_outside_the_sessions_directory() {
+        let temporary = tempfile::tempdir().expect("temporary directory should be created");
+        let sessions = temporary.path().join("sessions");
+        let outside = temporary.path().join("outside");
+        std::fs::create_dir_all(&sessions).expect("sessions directory should be created");
+        std::fs::create_dir_all(&outside).expect("outside directory should be created");
+        atomic_write_json(
+            &sessions.join(CURRENT_SESSION_FILE),
+            &CurrentSession {
+                session_id: uuid::Uuid::nil(),
+                root: outside,
+            },
+        )
+        .expect("pointer should be written");
+
+        assert!(matches!(
+            current_session(&sessions),
+            Err(Error::InvalidSessionPath(_))
+        ));
+    }
+
+    #[test]
+    fn legacy_relative_root_is_resolved_against_the_sessions_directory() {
+        let temporary = tempfile::tempdir().expect("temporary directory should be created");
+        let sessions = temporary.path().join("sessions");
+        let root = sessions.join("session-1");
+        std::fs::create_dir_all(&root).expect("session directory should be created");
+        atomic_write_json(
+            &sessions.join(CURRENT_SESSION_FILE),
+            &CurrentSession {
+                session_id: uuid::Uuid::nil(),
+                root: PathBuf::from("sessions/session-1"),
+            },
+        )
+        .expect("pointer should be written");
+
+        let (_, paths) = current_session(&sessions).expect("legacy pointer should resolve");
+        assert_eq!(
+            paths.root,
+            std::fs::canonicalize(root).expect("root should canonicalize")
+        );
+    }
 }

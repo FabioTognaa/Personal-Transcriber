@@ -37,3 +37,15 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 - Validazione preventiva di percorsi, lingua, configurazioni e spazio disponibile.
 - Finalizzazione recuperabile delle sessioni interrotte da SIGINT o SIGTERM, con
   stato ed evento di errore espliciti.
+- Cattura live macOS da microfono e BlackHole su stream separati, con resampling
+  mono 16 kHz, mix attenuato e persistenza delle due tracce originali.
+- Metriche live di segnale, picco, clock drift e blocchi persi, più probe audio
+  esplicito tramite `doctor --probe-audio`.
+- Limiti di memoria sulle code e sui buffer di cattura; overflow, stallo,
+  disconnessione e cambi di formato falliscono esplicitamente senza perdita muta.
+- Lock advisory recuperabili dopo crash, recovery esplicito delle sessioni rimaste
+  attive e serializzazione dei comandi di controllo concorrenti.
+- Percorsi di sessione assoluti e validazione di contenimento prima di operazioni
+  di controllo.
+- Protezione di tutti gli artefatti canonici da sovrascritture tramite export.
+- Limiti espliciti di memoria e durata per il simulatore WAV in-memory.

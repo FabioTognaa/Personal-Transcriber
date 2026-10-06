@@ -6,6 +6,8 @@ use crate::domain::{
 use crate::{Error, Result};
 
 pub const DEFAULT_CHUNK_DURATION_MS: u64 = 20;
+const MAX_FILE_SOURCE_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_FILE_SOURCE_DURATION_SECS: u64 = 30 * 60;
 
 #[derive(Debug, Clone)]
 pub struct FileAudioSource {
@@ -15,12 +17,25 @@ pub struct FileAudioSource {
 
 impl FileAudioSource {
     pub fn open(path: &Path) -> Result<Self> {
+        let file_size = std::fs::metadata(path)?.len();
+        if file_size > MAX_FILE_SOURCE_BYTES {
+            return Err(Error::UnsupportedWav(format!(
+                "file is {file_size} bytes; the in-memory simulator is limited to {MAX_FILE_SOURCE_BYTES} bytes"
+            )));
+        }
         let mut reader = hound::WavReader::open(path)?;
         let spec = reader.spec();
         if spec.channels == 0 || spec.sample_rate == 0 {
             return Err(Error::UnsupportedWav(
                 "sample rate and channel count must be non-zero".to_owned(),
             ));
+        }
+        if u64::from(reader.duration())
+            > u64::from(spec.sample_rate).saturating_mul(MAX_FILE_SOURCE_DURATION_SECS)
+        {
+            return Err(Error::UnsupportedWav(format!(
+                "duration exceeds the in-memory simulator limit of {MAX_FILE_SOURCE_DURATION_SECS} seconds"
+            )));
         }
 
         let interleaved = match (spec.sample_format, spec.bits_per_sample) {
@@ -128,5 +143,19 @@ mod tests {
 
         assert_eq!(output.len(), 16_000);
         assert!(output.iter().all(|sample| *sample == 0.25));
+    }
+
+    #[test]
+    fn simulator_rejects_files_that_exceed_its_memory_bound() {
+        let temporary = tempfile::NamedTempFile::new().expect("temporary file should be created");
+        temporary
+            .as_file()
+            .set_len(MAX_FILE_SOURCE_BYTES + 1)
+            .expect("sparse fixture should be resized");
+
+        assert!(matches!(
+            FileAudioSource::open(temporary.path()),
+            Err(Error::UnsupportedWav(_))
+        ));
     }
 }

@@ -137,6 +137,9 @@ restituiscono il percorso della sessione parziale.
 
 ## M5 — Cattura live macOS
 
+**Stato:** implementazione completata; verifica manuale su call reale bloccata finché
+BlackHole non è installato e visibile sul Mac di test.
+
 **Obiettivo:** sostituire la sorgente file con microfono e BlackHole, preservando il
 core invariato.
 
@@ -155,6 +158,13 @@ core invariato.
 - Il tool mantiene l'acquisizione anche se l'ASR accumula ritardo.
 - Nessun callback audio esegue inferenza o I/O bloccante.
 - La CLI segnala dispositivi disconnessi e assenza di segnale.
+
+L'adattatore live apre due stream separati, normalizza in mono 16 kHz, attenua il
+mix in modo deterministico e conserva entrambe le sorgenti. Callback, coda raw e
+buffer normalizzati sono bounded; overflow, stallo prolungato, disconnessione e
+cambio formato diventano errori espliciti. `doctor --probe-audio` verifica entrambi
+i segnali senza creare una sessione. I criteri relativi a una call reale restano da
+validare sull'hardware con BlackHole.
 
 ## M6 — Hardening e prerelease
 

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::domain::{SessionMetadata, TimestampUs, TranscriptSegment};
-use crate::schema::{SCHEMA_VERSION, SESSION_METADATA_FILE, TRANSCRIPT_FILE};
+use crate::schema::{SCHEMA_VERSION, SESSION_METADATA_FILE, SessionPaths, TRANSCRIPT_FILE};
 use crate::storage::read_json;
 use crate::{Error, Result};
 
@@ -27,7 +27,7 @@ pub fn export_session(session: &Path, format: Format, output: Option<&Path>) -> 
         });
     }
     let transcript = session.join(TRANSCRIPT_FILE);
-    ensure_distinct_output(&transcript, output)?;
+    ensure_safe_output(session, output)?;
     let metadata: SessionMetadata = read_json(&session.join(SESSION_METADATA_FILE))?;
     if metadata.schema_version != SCHEMA_VERSION {
         return Err(Error::InvalidExport(format!(
@@ -183,18 +183,39 @@ fn format_timestamp(timestamp: TimestampUs, separator: char) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:02}{separator}{milliseconds:03}")
 }
 
-fn ensure_distinct_output(transcript: &Path, output: Option<&Path>) -> Result<()> {
+fn ensure_safe_output(session: &Path, output: Option<&Path>) -> Result<()> {
     let Some(output) = output else {
         return Ok(());
     };
-    if output == transcript
-        || (output.exists()
-            && transcript.exists()
-            && fs::canonicalize(output)? == fs::canonicalize(transcript)?)
-    {
+    let session = fs::canonicalize(session)?;
+    let paths = SessionPaths::new(&session);
+    let output = if output.exists() {
+        fs::canonicalize(output)?
+    } else {
+        let parent = output
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::canonicalize(parent)?.join(
+            output
+                .file_name()
+                .ok_or_else(|| Error::InvalidExport("output has no filename".to_owned()))?,
+        )
+    };
+    let protected = [
+        paths.metadata,
+        paths.events,
+        paths.transcript,
+        paths.status,
+        paths.control,
+        paths.mixed_audio,
+        paths.microphone_audio,
+        paths.system_audio,
+    ];
+    if protected.contains(&output) {
         return Err(Error::InvalidExport(format!(
-            "output cannot overwrite the canonical transcript: {}",
-            transcript.display()
+            "output cannot overwrite a canonical session artifact: {}",
+            output.display()
         )));
     }
     Ok(())
@@ -304,14 +325,27 @@ mod tests {
     }
 
     #[test]
-    fn export_refuses_to_overwrite_the_canonical_transcript() {
+    fn export_refuses_to_overwrite_any_canonical_artifact() {
         let temporary = tempfile::tempdir().expect("temp directory should be created");
         let transcript = temporary.path().join(TRANSCRIPT_FILE);
         fs::write(&transcript, "").expect("fixture should be written");
+        fs::create_dir(temporary.path().join(crate::schema::AUDIO_DIRECTORY))
+            .expect("audio directory should be created");
 
-        let error = export_session(temporary.path(), Format::Jsonl, Some(transcript.as_path()))
-            .expect_err("canonical transcript must be protected");
-
-        assert!(matches!(error, Error::InvalidExport(_)));
+        let paths = SessionPaths::new(temporary.path());
+        for protected in [
+            paths.metadata,
+            paths.events,
+            paths.transcript,
+            paths.status,
+            paths.control,
+            paths.mixed_audio,
+            paths.microphone_audio,
+            paths.system_audio,
+        ] {
+            let error = ensure_safe_output(temporary.path(), Some(&protected))
+                .expect_err("canonical session artifacts must be protected");
+            assert!(matches!(error, Error::InvalidExport(_)));
+        }
     }
 }

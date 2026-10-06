@@ -50,24 +50,40 @@ pub struct DoctorArgs {
     /// Local whisper.cpp GGML model to validate.
     #[arg(long, default_value = "models/ggml-small-q5_1.bin")]
     pub model: PathBuf,
+
+    /// Open both live inputs and require signal on each.
+    #[arg(long)]
+    pub probe_audio: bool,
+
+    /// Exact microphone input name used by the audio probe.
+    #[arg(long, requires = "probe_audio")]
+    pub microphone: Option<String>,
+
+    /// Exact system input name used by the audio probe; defaults to BlackHole.
+    #[arg(long, requires = "probe_audio")]
+    pub system_audio: Option<String>,
+
+    /// Duration of the explicit audio probe.
+    #[arg(long, default_value_t = 3, requires = "probe_audio")]
+    pub probe_seconds: u64,
 }
 
 #[derive(Debug, Args)]
 pub struct StartArgs {
-    /// WAV file replayed in real time by the M1 simulator.
+    /// WAV file replayed in real time instead of opening live input devices.
     #[arg(long)]
-    pub input_wav: PathBuf,
+    pub input_wav: Option<PathBuf>,
 
     /// Local whisper.cpp GGML model path.
     #[arg(long)]
     pub model: PathBuf,
 
     /// Input device used for the local microphone.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "input_wav")]
     pub microphone: Option<String>,
 
     /// Input device used for remote/system audio, normally BlackHole on macOS.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "input_wav")]
     pub system_audio: Option<String>,
 
     /// Spoken language. The v1 implementation supports Italian only.
@@ -180,7 +196,17 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
             Ok(())
         }
         Command::Doctor(args) => {
-            let report = crate::diagnostics::doctor(&sessions_dir, &args.model);
+            let report = if args.probe_audio {
+                crate::diagnostics::doctor_with_audio_probe(
+                    &sessions_dir,
+                    &args.model,
+                    args.microphone.as_deref(),
+                    args.system_audio.as_deref(),
+                    std::time::Duration::from_secs(args.probe_seconds),
+                )
+            } else {
+                crate::diagnostics::doctor(&sessions_dir, &args.model)
+            };
             print_json(&report)?;
             if report.ready {
                 Ok(())
@@ -305,7 +331,7 @@ mod tests {
         assert_eq!(args.language, "it");
         assert_eq!(
             args.input_wav,
-            PathBuf::from("tests/fixtures/m1_stream.wav")
+            Some(PathBuf::from("tests/fixtures/m1_stream.wav"))
         );
         assert_eq!(args.model, PathBuf::from("models/fixture.bin"));
         assert_eq!(cli.sessions_dir, PathBuf::from("sessions"));

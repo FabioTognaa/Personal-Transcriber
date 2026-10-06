@@ -60,7 +60,7 @@ fn simulated_session_writes_verbatim_canonical_transcript() {
     let root = session::run_with_sink(
         StartOptions {
             sessions_dir: sessions_dir.clone(),
-            input_wav: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FIXTURE),
+            input_wav: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FIXTURE)),
             model: Some(model.path.clone()),
             language: "it".to_owned(),
             microphone: None,

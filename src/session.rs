@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{RecvTimeoutError, TrySendError, bounded};
+use crossbeam_channel::{RecvTimeoutError, SendTimeoutError, TrySendError, bounded};
 use uuid::Uuid;
 
 use crate::asr::{TranscribingSink, WhisperEngine, model_identity, validate_inference_config};
@@ -15,20 +15,25 @@ use crate::domain::{
     SegmentationMetrics, SegmenterConfig, SessionConfig, SessionEvent, SessionMetadata,
     SessionState, SessionStatus, SpeechSegment, TimestampUs,
 };
+use crate::live_audio::{LiveAudioChunk, LiveAudioConfig};
 use crate::schema::{CURRENT_SESSION_FILE, SCHEMA_VERSION};
 use crate::segment::Segmenter;
-use crate::storage::{CurrentSession, SessionStorage, read_json, unix_time_ms};
+use crate::storage::{
+    CurrentSession, ExclusiveFileLock, SessionStorage, atomic_write_json, read_json, unix_time_ms,
+};
 use crate::{Error, Result};
 
 const QUEUE_CAPACITY: usize = 64;
 const SEGMENTATION_QUEUE_CAPACITY: usize = 64;
 const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(5);
+const STATUS_WRITE_INTERVAL: Duration = Duration::from_millis(250);
+const DISK_CHECK_INTERVAL: Duration = Duration::from_secs(5);
 const RUNNER_LOCK_FILE: &str = ".runner.lock";
 
 #[derive(Debug, Clone)]
 pub struct StartOptions {
     pub sessions_dir: PathBuf,
-    pub input_wav: PathBuf,
+    pub input_wav: Option<PathBuf>,
     pub model: Option<PathBuf>,
     pub language: String,
     pub microphone: Option<String>,
@@ -36,6 +41,122 @@ pub struct StartOptions {
     pub segmenter: SegmenterConfig,
     pub inference: InferenceConfig,
     pub model_identity: Option<ModelIdentity>,
+}
+
+enum SessionAudioSource {
+    File(FileAudioSource),
+    Live(LiveAudioConfig),
+}
+
+enum SessionAudioChunk {
+    File(PcmChunk),
+    Live(LiveAudioChunk),
+}
+
+impl SessionAudioSource {
+    fn microphone_name(&self) -> Option<&str> {
+        match self {
+            Self::File(_) => None,
+            Self::Live(source) => Some(source.microphone_name()),
+        }
+    }
+
+    fn system_name(&self) -> Option<&str> {
+        match self {
+            Self::File(_) => None,
+            Self::Live(source) => Some(source.system_name()),
+        }
+    }
+
+    fn sample_count(&self) -> Option<usize> {
+        match self {
+            Self::File(source) => Some(source.sample_count()),
+            Self::Live(_) => None,
+        }
+    }
+
+    fn run(
+        self,
+        sender: crossbeam_channel::Sender<SessionAudioChunk>,
+        max_queue_depth: &AtomicUsize,
+        shutdown: &AtomicBool,
+    ) -> Result<()> {
+        match self {
+            Self::File(source) => {
+                let stream_start = Instant::now();
+                for chunk in source.chunks() {
+                    if shutdown.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let due = stream_start + Duration::from_micros(chunk.start.0);
+                    if let Some(delay) = due.checked_duration_since(Instant::now()) {
+                        thread::sleep(delay);
+                    }
+                    let duration = chunk.duration_us();
+                    if !send_source_chunk(
+                        &sender,
+                        SessionAudioChunk::File(chunk),
+                        max_queue_depth,
+                        shutdown,
+                        false,
+                    ) {
+                        break;
+                    }
+                    if sender.is_empty() && duration > 0 {
+                        let final_due = due + Duration::from_micros(duration);
+                        if let Some(delay) = final_due.checked_duration_since(Instant::now()) {
+                            thread::sleep(delay);
+                        }
+                    }
+                }
+                Ok(())
+            }
+            Self::Live(config) => config.open()?.run(shutdown, |chunk, finalizing| {
+                send_source_chunk(
+                    &sender,
+                    SessionAudioChunk::Live(chunk),
+                    max_queue_depth,
+                    shutdown,
+                    finalizing,
+                )
+            }),
+        }
+    }
+}
+
+fn send_source_chunk(
+    sender: &crossbeam_channel::Sender<SessionAudioChunk>,
+    mut chunk: SessionAudioChunk,
+    max_queue_depth: &AtomicUsize,
+    shutdown: &AtomicBool,
+    allow_during_shutdown: bool,
+) -> bool {
+    loop {
+        if shutdown.load(Ordering::Relaxed) && !allow_during_shutdown {
+            return false;
+        }
+        match sender.send_timeout(chunk, Duration::from_millis(100)) {
+            Ok(()) => {
+                max_queue_depth.fetch_max(sender.len(), Ordering::Relaxed);
+                return true;
+            }
+            Err(SendTimeoutError::Timeout(returned)) => {
+                if shutdown.load(Ordering::Relaxed) {
+                    return false;
+                }
+                chunk = returned;
+            }
+            Err(SendTimeoutError::Disconnected(_)) => return false,
+        }
+    }
+}
+
+struct ShutdownOnDrop(Arc<AtomicBool>);
+
+impl Drop for ShutdownOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
 }
 
 pub trait SegmentSink {
@@ -114,18 +235,36 @@ fn run_with_sink_internal(
     shutdown_requested: Option<&AtomicBool>,
 ) -> Result<PathBuf> {
     crate::validation::validate_directory_target(&options.sessions_dir, "sessions directory")?;
-    ensure_no_active_session(&options.sessions_dir)?;
     let _runner_guard = RunnerGuard::acquire(&options.sessions_dir)?;
+    recover_stale_session(&options.sessions_dir)?;
     validate_language(&options.language)?;
     validate_inference_config(&options.inference)?;
-    crate::validation::validate_existing_file(&options.input_wav, "input WAV")?;
-    let source = FileAudioSource::open(&options.input_wav)?;
+    let is_live = options.input_wav.is_none();
+    let source = match options.input_wav.as_deref() {
+        Some(path) => {
+            crate::validation::validate_existing_file(path, "input WAV")?;
+            SessionAudioSource::File(FileAudioSource::open(path)?)
+        }
+        None => SessionAudioSource::Live(LiveAudioConfig::resolve(
+            options.microphone.as_deref(),
+            options.system_audio.as_deref(),
+        )?),
+    };
+    let microphone_name = source
+        .microphone_name()
+        .map(ToOwned::to_owned)
+        .or(options.microphone);
+    let system_name = source
+        .system_name()
+        .map(ToOwned::to_owned)
+        .or(options.system_audio);
     let segmenter_config = options.segmenter.clone();
     let segmenter = Segmenter::new(segmenter_config.clone())?;
-    crate::validation::ensure_disk_space(
-        &options.sessions_dir,
-        crate::validation::estimated_session_bytes(source.sample_count()),
-    )?;
+    let required_space = source.sample_count().map_or(
+        crate::validation::SESSION_DISK_HEADROOM_BYTES,
+        crate::validation::estimated_session_bytes,
+    );
+    crate::validation::ensure_disk_space(&options.sessions_dir, required_space)?;
 
     let session_id = Uuid::new_v4();
     let started_at_unix_ms = unix_time_ms()?;
@@ -139,9 +278,9 @@ fn run_with_sink_internal(
             language: options.language,
             model_path: options.model,
             model: options.model_identity,
-            file_source: Some(options.input_wav),
-            microphone_device: options.microphone,
-            system_device: options.system_audio,
+            file_source: options.input_wav,
+            microphone_device: microphone_name,
+            system_device: system_name,
             sample_rate_hz: crate::domain::TARGET_SAMPLE_RATE_HZ,
             channels: crate::domain::TARGET_CHANNELS,
             segmenter: options.segmenter,
@@ -149,8 +288,6 @@ fn run_with_sink_internal(
         },
     };
     let mut storage = SessionStorage::create(&options.sessions_dir, &metadata)?;
-    sink.start(session_id, &storage.paths.transcript)?;
-    let sink_status_handle = sink.status_handle();
     let mut status = SessionStatus {
         schema_version: SCHEMA_VERSION,
         session_id,
@@ -170,47 +307,43 @@ fn run_with_sink_internal(
         max_asr_queue_depth: 0,
         asr_replay_required: false,
         asr: AsrMetrics::default(),
+        capture: None,
         applied_control_generation: 0,
     };
 
-    storage.append_event(&SessionEvent::SessionStarted {
-        schema_version: SCHEMA_VERSION,
-        session_id,
-        at: TimestampUs(0),
-    })?;
-    metadata.state = SessionState::Running;
-    status.state = SessionState::Running;
-    storage.write_metadata(&metadata)?;
-    storage.write_status(&status)?;
+    let startup_result = (|| -> Result<()> {
+        sink.start(session_id, &storage.paths.transcript)?;
+        storage.append_event(&SessionEvent::SessionStarted {
+            schema_version: SCHEMA_VERSION,
+            session_id,
+            at: TimestampUs(0),
+        })?;
+        metadata.state = SessionState::Running;
+        status.state = SessionState::Running;
+        storage.write_metadata(&metadata)?;
+        storage.write_status(&status)
+    })();
+    if let Err(error) = startup_result {
+        let _ = sink.finish();
+        persist_failed_session(&mut storage, &mut metadata, &mut status, error.to_string());
+        return Err(error);
+    }
+    let sink_status_handle = sink.status_handle();
 
     let (sender, receiver) = bounded(QUEUE_CAPACITY);
     let (segmentation_sender, segmentation_receiver) = bounded(SEGMENTATION_QUEUE_CAPACITY);
     let max_queue_depth = Arc::new(AtomicUsize::new(0));
     let max_segmentation_queue_depth = Arc::new(AtomicUsize::new(0));
     let segmentation_metrics = Arc::new(Mutex::new(SegmentationMetrics::default()));
+    let source_shutdown = Arc::new(AtomicBool::new(false));
+    let mut last_status_write = Instant::now();
+    let mut last_disk_check = Instant::now();
     let mut interrupted = false;
     let processing_result = thread::scope(|scope| -> Result<()> {
+        let _source_shutdown_guard = ShutdownOnDrop(Arc::clone(&source_shutdown));
         let producer_max = Arc::clone(&max_queue_depth);
-        let producer = scope.spawn(move || {
-            let stream_start = Instant::now();
-            for chunk in source.chunks() {
-                let due = stream_start + Duration::from_micros(chunk.start.0);
-                if let Some(delay) = due.checked_duration_since(Instant::now()) {
-                    thread::sleep(delay);
-                }
-                let duration = chunk.duration_us();
-                if sender.send(chunk).is_err() {
-                    return;
-                }
-                producer_max.fetch_max(sender.len(), Ordering::Relaxed);
-                if sender.is_empty() && duration > 0 {
-                    let final_due = due + Duration::from_micros(duration);
-                    if let Some(delay) = final_due.checked_duration_since(Instant::now()) {
-                        thread::sleep(delay);
-                    }
-                }
-            }
-        });
+        let producer_shutdown = Arc::clone(&source_shutdown);
+        let producer = scope.spawn(move || source.run(sender, &producer_max, &producer_shutdown));
 
         let worker_metrics = Arc::clone(&segmentation_metrics);
         let segmentation_worker = scope.spawn(move || {
@@ -244,12 +377,27 @@ fn run_with_sink_internal(
             }
             if status.state == SessionState::Stopping {
                 segment_drain = previous_state == SessionState::Running;
+                source_shutdown.store(true, Ordering::Relaxed);
                 break;
             }
 
             match receiver.recv_timeout(CONTROL_POLL_INTERVAL) {
-                Ok(chunk) => {
-                    storage.write_audio(&chunk)?;
+                Ok(source_chunk) => {
+                    let chunk = match source_chunk {
+                        SessionAudioChunk::File(chunk) => {
+                            storage.write_audio(&chunk)?;
+                            chunk
+                        }
+                        SessionAudioChunk::Live(chunk) => {
+                            storage.write_live_audio(
+                                &chunk.microphone,
+                                &chunk.system,
+                                &chunk.mixed,
+                            )?;
+                            status.capture = Some(chunk.capture);
+                            chunk.mixed
+                        }
+                    };
                     if status.state == SessionState::Running {
                         record_eligible_range(&mut eligible_ranges, &chunk);
                         if !segmentation_replay_required
@@ -274,15 +422,47 @@ fn run_with_sink_internal(
                         &segmentation_metrics,
                         &sink_status_handle,
                     );
-                    storage.write_status(&status)?;
+                    if last_status_write.elapsed() >= STATUS_WRITE_INTERVAL {
+                        storage.write_status(&status)?;
+                        last_status_write = Instant::now();
+                    }
+                    if is_live && last_disk_check.elapsed() >= DISK_CHECK_INTERVAL {
+                        crate::validation::ensure_disk_space(
+                            &storage.paths.root,
+                            crate::validation::SESSION_DISK_HEADROOM_BYTES,
+                        )?;
+                        last_disk_check = Instant::now();
+                    }
                 }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
         }
 
-        while let Ok(chunk) = receiver.try_recv() {
-            storage.write_audio(&chunk)?;
+        source_shutdown.store(true, Ordering::Relaxed);
+        loop {
+            let source_chunk = match receiver.try_recv() {
+                Ok(chunk) => chunk,
+                Err(crossbeam_channel::TryRecvError::Empty) if !producer.is_finished() => {
+                    thread::sleep(CONTROL_POLL_INTERVAL);
+                    continue;
+                }
+                Err(
+                    crossbeam_channel::TryRecvError::Empty
+                    | crossbeam_channel::TryRecvError::Disconnected,
+                ) => break,
+            };
+            let chunk = match source_chunk {
+                SessionAudioChunk::File(chunk) => {
+                    storage.write_audio(&chunk)?;
+                    chunk
+                }
+                SessionAudioChunk::Live(chunk) => {
+                    storage.write_live_audio(&chunk.microphone, &chunk.system, &chunk.mixed)?;
+                    status.capture = Some(chunk.capture);
+                    chunk.mixed
+                }
+            };
             if segment_drain {
                 record_eligible_range(&mut eligible_ranges, &chunk);
                 if !segmentation_replay_required
@@ -313,7 +493,7 @@ fn run_with_sink_internal(
             .map_err(|_| Error::SegmentationWorkerPanicked)?;
         drop(segmentation_sender);
 
-        producer.join().map_err(|_| Error::AudioWorkerPanicked)?;
+        producer.join().map_err(|_| Error::AudioWorkerPanicked)??;
         let (worker_result, sink) = segmentation_worker
             .join()
             .map_err(|_| Error::SegmentationWorkerPanicked)?;
@@ -350,51 +530,67 @@ fn run_with_sink_internal(
     });
 
     if let Err(error) = processing_result {
-        metadata.state = SessionState::Failed;
-        metadata.ended_at_unix_ms = Some(unix_time_ms()?);
-        status.state = SessionState::Failed;
-        storage.append_event(&SessionEvent::Error {
-            schema_version: SCHEMA_VERSION,
-            session_id,
-            at: status.audio_position,
-            message: error.to_string(),
-        })?;
-        storage.finalize_audio()?;
-        storage.write_metadata(&metadata)?;
-        storage.write_status(&status)?;
+        persist_failed_session(&mut storage, &mut metadata, &mut status, error.to_string());
         return Err(error);
     }
 
     if interrupted {
-        metadata.state = SessionState::Failed;
-        metadata.ended_at_unix_ms = Some(unix_time_ms()?);
-        status.state = SessionState::Failed;
-        storage.append_event(&SessionEvent::Error {
-            schema_version: SCHEMA_VERSION,
-            session_id,
-            at: status.audio_position,
-            message: "termination signal received; partial session finalized".to_owned(),
-        })?;
-        storage.finalize_audio()?;
-        storage.write_metadata(&metadata)?;
-        storage.write_status(&status)?;
+        persist_failed_session(
+            &mut storage,
+            &mut metadata,
+            &mut status,
+            "termination signal received; partial session finalized".to_owned(),
+        );
         return Err(Error::SessionInterrupted(storage.paths.root.clone()));
     }
 
-    storage.append_event(&SessionEvent::SessionStopped {
-        schema_version: SCHEMA_VERSION,
-        session_id,
-        at: status.audio_position,
-    })?;
-    storage.finalize_audio()?;
-    metadata.state = SessionState::Completed;
-    metadata.ended_at_unix_ms = Some(unix_time_ms()?);
-    status.state = SessionState::Completed;
-    status.queue_depth = 0;
-    storage.write_metadata(&metadata)?;
-    storage.write_status(&status)?;
+    let completion_result = (|| -> Result<()> {
+        storage.append_event(&SessionEvent::SessionStopped {
+            schema_version: SCHEMA_VERSION,
+            session_id,
+            at: status.audio_position,
+        })?;
+        storage.finalize_audio()?;
+        metadata.state = SessionState::Completed;
+        metadata.ended_at_unix_ms = Some(unix_time_ms()?);
+        status.state = SessionState::Completed;
+        status.queue_depth = 0;
+        storage.write_metadata(&metadata)?;
+        storage.write_status(&status)
+    })();
+    if let Err(error) = completion_result {
+        persist_failed_session(&mut storage, &mut metadata, &mut status, error.to_string());
+        return Err(error);
+    }
 
     Ok(storage.paths.root)
+}
+
+fn persist_failed_session(
+    storage: &mut SessionStorage,
+    metadata: &mut SessionMetadata,
+    status: &mut SessionStatus,
+    message: String,
+) {
+    metadata.state = SessionState::Failed;
+    metadata.ended_at_unix_ms = unix_time_ms().ok();
+    status.state = SessionState::Failed;
+    let event = SessionEvent::Error {
+        schema_version: SCHEMA_VERSION,
+        session_id: status.session_id,
+        at: status.audio_position,
+        message,
+    };
+    for (operation, result) in [
+        ("append failure event", storage.append_event(&event)),
+        ("finalize audio", storage.finalize_audio()),
+        ("write failed metadata", storage.write_metadata(metadata)),
+        ("write failed status", storage.write_status(status)),
+    ] {
+        if let Err(error) = result {
+            tracing::error!(operation, %error, "failed to persist session failure state");
+        }
+    }
 }
 
 fn validate_language(language: &str) -> Result<()> {
@@ -648,54 +844,80 @@ fn apply_control_if_present(
     storage.write_status(status)
 }
 
-fn ensure_no_active_session(sessions_dir: &Path) -> Result<()> {
+fn recover_stale_session(sessions_dir: &Path) -> Result<()> {
+    let sessions_dir = fs::canonicalize(sessions_dir)?;
     let current_path = sessions_dir.join(CURRENT_SESSION_FILE);
     if !current_path.exists() {
         return Ok(());
     }
     let current: CurrentSession = read_json(&current_path)?;
-    let status_path = crate::schema::SessionPaths::new(&current.root).status;
+    let candidate = if current.root.is_absolute() {
+        current.root.clone()
+    } else {
+        sessions_dir.join(
+            current
+                .root
+                .file_name()
+                .ok_or_else(|| Error::InvalidSessionPath(current.root.clone()))?,
+        )
+    };
+    let root =
+        fs::canonicalize(&candidate).map_err(|_| Error::InvalidSessionPath(candidate.clone()))?;
+    let paths = crate::schema::SessionPaths::new(root);
+    if !paths.is_within(&sessions_dir) || paths.root == sessions_dir {
+        return Err(Error::InvalidSessionPath(paths.root));
+    }
+    let status_path = &paths.status;
     if !status_path.exists() {
         return Ok(());
     }
-    let status: SessionStatus = read_json(&status_path)?;
-    if matches!(
+    let mut status: SessionStatus = read_json(status_path)?;
+    if !matches!(
         status.state,
         SessionState::Starting
             | SessionState::Running
             | SessionState::TranscriptionPaused
             | SessionState::Stopping
     ) {
-        return Err(Error::ActiveSessionExists(current.root));
+        return Ok(());
     }
+    let mut metadata: SessionMetadata = read_json(&paths.metadata)?;
+    let ended_at = unix_time_ms()?;
+    let message = "previous process ended without cleanup; stale session recovered".to_owned();
+    status.state = SessionState::Failed;
+    metadata.state = SessionState::Failed;
+    metadata.ended_at_unix_ms = Some(ended_at);
+    atomic_write_json(&paths.status, &status)?;
+    atomic_write_json(&paths.metadata, &metadata)?;
+    let mut events = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&paths.events)?;
+    serde_json::to_writer(
+        &mut events,
+        &SessionEvent::Error {
+            schema_version: SCHEMA_VERSION,
+            session_id: status.session_id,
+            at: status.audio_position,
+            message,
+        },
+    )?;
+    use std::io::Write;
+    events.write_all(b"\n")?;
+    events.flush()?;
     Ok(())
 }
 
 struct RunnerGuard {
-    path: PathBuf,
+    _lock: ExclusiveFileLock,
 }
 
 impl RunnerGuard {
     fn acquire(sessions_dir: &Path) -> Result<Self> {
         fs::create_dir_all(sessions_dir)?;
         let path = sessions_dir.join(RUNNER_LOCK_FILE);
-        OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .map_err(|error| {
-                if error.kind() == std::io::ErrorKind::AlreadyExists {
-                    Error::ActiveSessionExists(sessions_dir.to_path_buf())
-                } else {
-                    Error::Io(error)
-                }
-            })?;
-        Ok(Self { path })
-    }
-}
-
-impl Drop for RunnerGuard {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        let lock = ExclusiveFileLock::try_acquire(&path)?
+            .ok_or_else(|| Error::ActiveSessionExists(sessions_dir.to_path_buf()))?;
+        Ok(Self { _lock: lock })
     }
 }

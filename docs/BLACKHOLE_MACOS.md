@@ -36,13 +36,16 @@ Prima di una riunione importante:
 
 1. eseguire `live-transcript devices` e verificare che BlackHole e microfono siano
    elencati;
-2. eseguire `live-transcript doctor`;
-3. riprodurre un breve audio di prova;
-4. avviare una breve sessione;
-5. controllare che siano presenti segnale remoto, segnale microfono e file audio.
+2. iniziare a parlare e riprodurre un breve audio verso il dispositivo Multi-output;
+3. eseguire `live-transcript doctor --probe-audio`; se necessario, passare i nomi
+   esatti con `--microphone` e `--system-audio`;
+4. verificare che `microphone_signal`, `system_signal` e `capture_integrity`
+   risultino `pass`;
+5. avviare una breve sessione e controllare `audio/microphone.wav`,
+   `audio/system.wav`, `audio/mixed.wav` e le metriche `capture` di `status`.
 
-Il tool deve mostrare livelli/rilevamento segnale durante i controlli, ma non deve
-modificare automaticamente le impostazioni audio di macOS.
+Il probe dura tre secondi per impostazione predefinita, non crea una sessione e non
+modifica le impostazioni audio di macOS.
 
 ## Ripristino
 

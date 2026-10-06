@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 pub const SESSION_METADATA_FILE: &str = "session.json";
 pub const EVENTS_FILE: &str = "events.jsonl";
 pub const TRANSCRIPT_FILE: &str = "transcript.jsonl";
@@ -10,6 +10,8 @@ pub const CURRENT_SESSION_FILE: &str = "current-session.json";
 pub const AUDIO_DIRECTORY: &str = "audio";
 pub const LOG_DIRECTORY: &str = "logs";
 pub const MIXED_AUDIO_FILE: &str = "mixed.wav";
+pub const MICROPHONE_AUDIO_FILE: &str = "microphone.wav";
+pub const SYSTEM_AUDIO_FILE: &str = "system.wav";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionPaths {
@@ -20,6 +22,8 @@ pub struct SessionPaths {
     pub status: PathBuf,
     pub control: PathBuf,
     pub mixed_audio: PathBuf,
+    pub microphone_audio: PathBuf,
+    pub system_audio: PathBuf,
     pub audio: PathBuf,
     pub logs: PathBuf,
 }
@@ -36,6 +40,8 @@ impl SessionPaths {
             status: root.join(STATUS_FILE),
             control: root.join(CONTROL_FILE),
             mixed_audio: root.join(AUDIO_DIRECTORY).join(MIXED_AUDIO_FILE),
+            microphone_audio: root.join(AUDIO_DIRECTORY).join(MICROPHONE_AUDIO_FILE),
+            system_audio: root.join(AUDIO_DIRECTORY).join(SYSTEM_AUDIO_FILE),
             audio: root.join(AUDIO_DIRECTORY),
             logs: root.join(LOG_DIRECTORY),
             root,

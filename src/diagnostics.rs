@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait};
 use serde::Serialize;
@@ -90,19 +91,99 @@ pub fn audio_devices() -> Result<DeviceInventory> {
 }
 
 pub fn doctor(sessions_dir: &Path, model: &Path) -> DoctorReport {
+    doctor_internal(sessions_dir, model, None)
+}
+
+pub fn doctor_with_audio_probe(
+    sessions_dir: &Path,
+    model: &Path,
+    microphone: Option<&str>,
+    system_audio: Option<&str>,
+    duration: Duration,
+) -> DoctorReport {
+    doctor_internal(
+        sessions_dir,
+        model,
+        Some((microphone, system_audio, duration)),
+    )
+}
+
+fn doctor_internal(
+    sessions_dir: &Path,
+    model: &Path,
+    audio_probe: Option<(Option<&str>, Option<&str>, Duration)>,
+) -> DoctorReport {
     let mut checks = vec![platform_check(), sessions_directory_check(sessions_dir)];
     checks.push(disk_space_check(sessions_dir));
     checks.push(model_check(model));
     checks.extend(device_checks());
-    checks.push(DoctorCheck {
-        name: "microphone_permission",
-        status: CheckStatus::Warning,
-        detail: "not probed: doctor does not open an audio stream; capture will verify it in M5"
-            .to_owned(),
-    });
+    match audio_probe {
+        Some((microphone, system_audio, duration)) => {
+            checks.extend(signal_checks(microphone, system_audio, duration));
+        }
+        None => checks.push(DoctorCheck {
+            name: "audio_signal",
+            status: CheckStatus::Warning,
+            detail:
+                "not probed; pass --probe-audio while microphone and system test audio are active"
+                    .to_owned(),
+        }),
+    }
     let ready = checks.iter().all(|check| check.status != CheckStatus::Fail);
 
     DoctorReport { ready, checks }
+}
+
+fn signal_checks(
+    microphone: Option<&str>,
+    system_audio: Option<&str>,
+    duration: Duration,
+) -> Vec<DoctorCheck> {
+    match crate::live_audio::probe(microphone, system_audio, duration) {
+        Ok(metrics) => vec![
+            signal_check(
+                "microphone_signal",
+                metrics.microphone_signal,
+                metrics.microphone_peak_milli,
+            ),
+            signal_check(
+                "system_signal",
+                metrics.system_signal,
+                metrics.system_peak_milli,
+            ),
+            DoctorCheck {
+                name: "capture_integrity",
+                status: if metrics.callback_blocks_dropped > 0 {
+                    CheckStatus::Fail
+                } else if metrics.clock_drift_us.unsigned_abs() > 20_000 {
+                    CheckStatus::Warning
+                } else {
+                    CheckStatus::Pass
+                },
+                detail: format!(
+                    "{} callback block(s) dropped; measured clock drift {} us",
+                    metrics.callback_blocks_dropped, metrics.clock_drift_us
+                ),
+            },
+        ],
+        Err(error) => vec![DoctorCheck {
+            name: "audio_signal",
+            status: CheckStatus::Fail,
+            detail: error.to_string(),
+        }],
+    }
+}
+
+fn signal_check(name: &'static str, detected: bool, peak_milli: u32) -> DoctorCheck {
+    DoctorCheck {
+        name,
+        status: if detected {
+            CheckStatus::Pass
+        } else {
+            CheckStatus::Fail
+        },
+        detail: format!("peak amplitude {peak_milli}/1000"),
+    }
 }
 
 fn stream_configuration(config: cpal::SupportedStreamConfig) -> StreamConfiguration {

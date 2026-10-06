@@ -1,18 +1,19 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use live_transcript::Result;
 use live_transcript::control;
 use live_transcript::domain::{
-    ControlAction, InferenceConfig, SegmenterConfig, SessionEvent, SessionState, SessionStatus,
-    SpeechSegment, TimestampUs,
+    ControlAction, InferenceConfig, SegmenterConfig, SessionConfig, SessionEvent, SessionMetadata,
+    SessionState, SessionStatus, SpeechSegment, TimestampUs,
 };
-use live_transcript::schema::{EVENTS_FILE, MIXED_AUDIO_FILE};
+use live_transcript::schema::{EVENTS_FILE, MIXED_AUDIO_FILE, SCHEMA_VERSION};
 use live_transcript::session::{self, NullSegmentSink, SegmentSink, StartOptions};
+use live_transcript::storage::{SessionStorage, read_json};
 
 const FIXTURE: &str = "tests/fixtures/m1_stream.wav";
 
@@ -36,6 +37,20 @@ struct SlowSink;
 impl SegmentSink for SlowSink {
     fn accept(&mut self, _segment: &SpeechSegment) -> Result<()> {
         thread::sleep(Duration::from_millis(100));
+        Ok(())
+    }
+}
+
+struct FailingStartSink;
+
+impl SegmentSink for FailingStartSink {
+    fn start(&mut self, _session_id: uuid::Uuid, _transcript_path: &Path) -> Result<()> {
+        Err(live_transcript::Error::Asr(
+            "intentional startup failure".to_owned(),
+        ))
+    }
+
+    fn accept(&mut self, _segment: &SpeechSegment) -> Result<()> {
         Ok(())
     }
 }
@@ -201,10 +216,133 @@ fn shutdown_signal_finalizes_a_readable_partial_session() {
     ));
 }
 
+#[test]
+fn startup_failure_finalizes_files_and_marks_the_session_failed() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let sessions_dir = temporary.path().join("sessions");
+
+    let error = session::run_with_sink(options(sessions_dir.clone()), &mut FailingStartSink)
+        .expect_err("sink startup should fail");
+    let report = control::status_report(&sessions_dir).expect("failed session should be readable");
+    let status = control::current_status(&sessions_dir).expect("failed status should be readable");
+
+    assert!(matches!(error, live_transcript::Error::Asr(_)));
+    assert_eq!(status.state, SessionState::Failed);
+    assert_eq!(
+        wav_samples(&report.session_root.join("audio").join(MIXED_AUDIO_FILE)),
+        0
+    );
+}
+
+#[test]
+fn stale_active_session_and_lock_file_are_recovered_after_a_crash() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let sessions_dir = temporary.path().join("sessions");
+    let stale_id = uuid::Uuid::new_v4();
+    let metadata = SessionMetadata {
+        schema_version: SCHEMA_VERSION,
+        session_id: stale_id,
+        state: SessionState::Running,
+        started_at_unix_ms: 1,
+        ended_at_unix_ms: None,
+        config: SessionConfig::italian(None),
+    };
+    let storage =
+        SessionStorage::create(&sessions_dir, &metadata).expect("stale storage should be created");
+    let stale_root = storage.paths.root.clone();
+    storage
+        .write_status(&SessionStatus {
+            schema_version: SCHEMA_VERSION,
+            session_id: stale_id,
+            state: SessionState::Running,
+            audio_position: TimestampUs(0),
+            chunks_written: 0,
+            queue_depth: 0,
+            queue_capacity: 64,
+            max_queue_depth: 0,
+            segmentation_queue_depth: 0,
+            segmentation_queue_capacity: 64,
+            max_segmentation_queue_depth: 0,
+            segmentation_replay_required: false,
+            segmentation: Default::default(),
+            asr_queue_depth: 0,
+            asr_queue_capacity: 0,
+            max_asr_queue_depth: 0,
+            asr_replay_required: false,
+            asr: Default::default(),
+            capture: None,
+            applied_control_generation: 0,
+        })
+        .expect("stale status should be written");
+    drop(storage);
+    fs::write(
+        sessions_dir.join(".runner.lock"),
+        b"left by crashed process",
+    )
+    .expect("stale lock marker should be created");
+
+    let new_root = run_without_asr(options(sessions_dir)).expect("new session should recover");
+    let recovered: SessionStatus =
+        read_json(&stale_root.join("status.json")).expect("stale status should remain readable");
+
+    assert_eq!(recovered.state, SessionState::Failed);
+    assert_ne!(new_root, stale_root);
+}
+
+#[test]
+fn concurrent_pause_and_stop_cannot_falsely_acknowledge_stop() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let sessions_dir = temporary.path().join("sessions");
+    let worker_sessions = sessions_dir.clone();
+    let worker = thread::spawn(move || run_without_asr(options(worker_sessions)));
+    wait_for_position(&sessions_dir, 100_000);
+
+    let barrier = Arc::new(Barrier::new(3));
+    let pause_sessions = sessions_dir.clone();
+    let pause_barrier = Arc::clone(&barrier);
+    let pause = thread::spawn(move || {
+        pause_barrier.wait();
+        control::request(&pause_sessions, ControlAction::Pause)
+    });
+    let stop_sessions = sessions_dir.clone();
+    let stop_barrier = Arc::clone(&barrier);
+    let stop = thread::spawn(move || {
+        stop_barrier.wait();
+        control::request(&stop_sessions, ControlAction::Stop)
+    });
+    barrier.wait();
+
+    let stop_status = stop
+        .join()
+        .expect("stop caller should not panic")
+        .expect("stop must be applied");
+    let pause_result = pause.join().expect("pause caller should not panic");
+    let root = worker
+        .join()
+        .expect("session worker should not panic")
+        .expect("session should finalize");
+
+    assert_eq!(stop_status.state, SessionState::Completed);
+    assert!(root.is_dir());
+    assert!(
+        matches!(
+            pause_result,
+            Ok(SessionStatus {
+                state: SessionState::TranscriptionPaused,
+                ..
+            }) | Err(live_transcript::Error::InvalidControlState {
+                state: SessionState::Completed,
+                ..
+            })
+        ),
+        "pause may precede stop or be rejected after completion, but cannot overwrite stop"
+    );
+}
+
 fn options(sessions_dir: PathBuf) -> StartOptions {
     StartOptions {
         sessions_dir,
-        input_wav: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FIXTURE),
+        input_wav: Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FIXTURE)),
         model: None,
         language: "it".to_owned(),
         microphone: None,

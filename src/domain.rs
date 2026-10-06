@@ -128,6 +128,17 @@ pub struct AsrMetrics {
     pub real_time_factor_milli: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CaptureMetrics {
+    pub microphone_peak_milli: u32,
+    pub system_peak_milli: u32,
+    pub microphone_signal: bool,
+    pub system_signal: bool,
+    pub clock_drift_us: i64,
+    pub callback_blocks_dropped: u64,
+    pub elapsed_us: u64,
+}
+
 impl PcmChunk {
     #[must_use]
     pub fn duration_us(&self) -> u64 {
@@ -273,6 +284,8 @@ pub struct SessionStatus {
     pub max_asr_queue_depth: usize,
     pub asr_replay_required: bool,
     pub asr: AsrMetrics,
+    #[serde(default)]
+    pub capture: Option<CaptureMetrics>,
     pub applied_control_generation: u64,
 }
 
