@@ -1,0 +1,79 @@
+{
+  "generated_at_unix_ms": 1791288463865,
+  "git_commit": "d25f345798e15fcd07258e804120054ed9bc5828",
+  "rust_version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "whisper_rs_version": "0.16.0",
+  "whisper_cpp_version": "1.8.3",
+  "whisper_system_info": "WHISPER : COREML = 0 | OPENVINO = 0 | Metal : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ARM_FMA = 1 | FP16_VA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | SME = 1 | ACCELERATE = 1 | REPACK = 1 | ",
+  "hardware": {
+    "os_version": "27.0.1",
+    "chip": "Apple M5",
+    "memory_bytes": "34359738368"
+  },
+  "model": {
+    "path": "models/ggml-small-q5_1.bin",
+    "name": "ggml-small-q5_1.bin",
+    "sha256": "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+    "size_bytes": 190085487,
+    "source": "https://huggingface.co/ggerganov/whisper.cpp"
+  },
+  "input": {
+    "path": "benchmarks/fixtures/italian_public.wav",
+    "sha256": "1152ddf3a9d2862fe9f43c0f8c26c2ad416bed1e71c3e89405742eadb3883d74",
+    "duration_us": 1650000,
+    "sample_rate_hz": 16000,
+    "channels": 1
+  },
+  "inference": {
+    "threads": 8,
+    "strategy": "beam_search",
+    "best_of": 5,
+    "beam_size": 5,
+    "temperature": 0.0,
+    "flash_attention": true,
+    "coreml": false
+  },
+  "model_load_us": 356197,
+  "warmup_iterations": 1,
+  "runs": [
+    {
+      "iteration": 0,
+      "inference_us": 333958,
+      "rtf": 0.20239878787878787,
+      "text": " il prezzo"
+    },
+    {
+      "iteration": 1,
+      "inference_us": 377045,
+      "rtf": 0.22851212121212122,
+      "text": " il prezzo"
+    },
+    {
+      "iteration": 2,
+      "inference_us": 405047,
+      "rtf": 0.24548303030303031,
+      "text": " il prezzo"
+    },
+    {
+      "iteration": 3,
+      "inference_us": 417861,
+      "rtf": 0.2532490909090909,
+      "text": " il prezzo"
+    },
+    {
+      "iteration": 4,
+      "inference_us": 405211,
+      "rtf": 0.24558242424242424,
+      "text": " il prezzo"
+    }
+  ],
+  "median_rtf": 0.24548303030303031,
+  "p95_rtf": 0.2532490909090909,
+  "peak_rss_bytes": 515194880,
+  "quality": {
+    "reference_path": "benchmarks/fixtures/italian_public.txt",
+    "reference_sha256": "13536c1ead35b201016e5e410e0e466d044289cc31d729c7a2d1618c89ac34e8",
+    "wer": 0.0,
+    "cer": 0.0
+  }
+}

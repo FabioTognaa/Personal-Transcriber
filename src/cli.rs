@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::domain::{ControlAction, SegmenterConfig};
+use crate::domain::{ControlAction, InferenceConfig, InferenceStrategy, SegmenterConfig};
 use crate::session::StartOptions;
 use crate::{Error, Result};
 
@@ -51,9 +51,9 @@ pub struct StartArgs {
     #[arg(long)]
     pub input_wav: PathBuf,
 
-    /// Local whisper model path. It is recorded but not used before M3.
+    /// Local whisper.cpp GGML model path.
     #[arg(long)]
-    pub model: Option<PathBuf>,
+    pub model: PathBuf,
 
     /// Input device used for the local microphone.
     #[arg(long)]
@@ -94,6 +94,53 @@ pub struct StartArgs {
     /// Maximum segment duration before a deterministic split.
     #[arg(long, default_value_t = 30_000)]
     pub vad_max_segment_ms: u64,
+
+    /// CPU threads used by whisper.cpp.
+    #[arg(long, default_value_t = default_threads())]
+    pub asr_threads: i32,
+
+    /// Whisper decoding strategy.
+    #[arg(long, value_enum, default_value_t = DecoderStrategy::BeamSearch)]
+    pub asr_strategy: DecoderStrategy,
+
+    /// Candidate count for greedy decoding.
+    #[arg(long, default_value_t = 5)]
+    pub asr_best_of: i32,
+
+    /// Beam width for beam-search decoding.
+    #[arg(long, default_value_t = 5)]
+    pub asr_beam_size: i32,
+
+    /// Initial decoding temperature.
+    #[arg(long, default_value_t = 0.0)]
+    pub asr_temperature: f32,
+
+    /// Enable whisper.cpp flash attention.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub asr_flash_attention: bool,
+
+    /// Require a binary built with the optional Core ML feature.
+    #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
+    pub asr_coreml: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum DecoderStrategy {
+    Greedy,
+    BeamSearch,
+}
+
+impl From<DecoderStrategy> for InferenceStrategy {
+    fn from(strategy: DecoderStrategy) -> Self {
+        match strategy {
+            DecoderStrategy::Greedy => Self::Greedy,
+            DecoderStrategy::BeamSearch => Self::BeamSearch,
+        }
+    }
+}
+
+fn default_threads() -> i32 {
+    std::thread::available_parallelism().map_or(4, |count| count.get().min(8) as i32)
 }
 
 #[derive(Debug, Args)]
@@ -127,7 +174,7 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
             let root = crate::session::run(StartOptions {
                 sessions_dir,
                 input_wav: args.input_wav,
-                model: args.model,
+                model: Some(args.model),
                 language: args.language,
                 microphone: args.microphone,
                 system_audio: args.system_audio,
@@ -140,6 +187,16 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
                     min_speech_ms: args.vad_min_speech_ms,
                     max_segment_ms: args.vad_max_segment_ms,
                 },
+                inference: InferenceConfig {
+                    threads: args.asr_threads,
+                    strategy: args.asr_strategy.into(),
+                    best_of: args.asr_best_of,
+                    beam_size: args.asr_beam_size,
+                    temperature: args.asr_temperature,
+                    flash_attention: args.asr_flash_attention,
+                    coreml: args.asr_coreml,
+                },
+                model_identity: None,
             })?;
             println!("{}", root.display());
             return Ok(());
@@ -197,6 +254,8 @@ mod tests {
             "start",
             "--input-wav",
             "tests/fixtures/m1_stream.wav",
+            "--model",
+            "models/fixture.bin",
         ])
         .expect("start command should parse");
 
@@ -209,6 +268,7 @@ mod tests {
             args.input_wav,
             PathBuf::from("tests/fixtures/m1_stream.wav")
         );
+        assert_eq!(args.model, PathBuf::from("models/fixture.bin"));
         assert_eq!(cli.sessions_dir, PathBuf::from("sessions"));
     }
 

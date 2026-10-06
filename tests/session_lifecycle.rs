@@ -7,11 +7,11 @@ use std::time::{Duration, Instant};
 use live_transcript::Result;
 use live_transcript::control;
 use live_transcript::domain::{
-    ControlAction, SegmenterConfig, SessionEvent, SessionState, SessionStatus, SpeechSegment,
-    TimestampUs,
+    ControlAction, InferenceConfig, SegmenterConfig, SessionEvent, SessionState, SessionStatus,
+    SpeechSegment, TimestampUs,
 };
 use live_transcript::schema::{EVENTS_FILE, MIXED_AUDIO_FILE};
-use live_transcript::session::{self, SegmentSink, StartOptions};
+use live_transcript::session::{self, NullSegmentSink, SegmentSink, StartOptions};
 
 const FIXTURE: &str = "tests/fixtures/m1_stream.wav";
 
@@ -111,7 +111,7 @@ fn stop_is_idempotent_and_a_new_session_does_not_corrupt_the_previous_wav() {
     let temporary = tempfile::tempdir().expect("temp directory should be created");
     let sessions_dir = temporary.path().join("sessions");
     let worker_sessions = sessions_dir.clone();
-    let worker = thread::spawn(move || session::run(options(worker_sessions)));
+    let worker = thread::spawn(move || run_without_asr(options(worker_sessions)));
 
     wait_for_position(&sessions_dir, 100_000);
     control::request(&sessions_dir, ControlAction::Stop).expect("stop should be acknowledged");
@@ -128,7 +128,7 @@ fn stop_is_idempotent_and_a_new_session_does_not_corrupt_the_previous_wav() {
         control::request(&sessions_dir, ControlAction::Stop).expect("second stop is idempotent");
     assert_eq!(stopped_again.state, SessionState::Completed);
 
-    let second_root = session::run(options(sessions_dir)).expect("a new session should run");
+    let second_root = run_without_asr(options(sessions_dir)).expect("a new session should run");
     assert_ne!(first_root, second_root);
     assert_eq!(wav_samples(&first_audio), first_samples);
     assert_eq!(
@@ -170,7 +170,13 @@ fn options(sessions_dir: PathBuf) -> StartOptions {
         microphone: None,
         system_audio: None,
         segmenter: SegmenterConfig::default(),
+        inference: InferenceConfig::default(),
+        model_identity: None,
     }
+}
+
+fn run_without_asr(options: StartOptions) -> Result<PathBuf> {
+    session::run_with_sink(options, &mut NullSegmentSink)
 }
 
 fn wait_for_position(sessions_dir: &Path, target_us: u64) -> SessionStatus {

@@ -5,8 +5,8 @@ destinata a macOS Apple Silicon, usa BlackHole per leggere l'audio della call e
 conserva audio e trascrizioni esclusivamente sul computer dell'utente.
 
 Il progetto è in sviluppo iniziale. Può simulare una sessione riproducendo un file
-WAV in tempo reale e segmentare localmente il parlato con un VAD energetico
-deterministico. Cattura live e ASR non sono ancora implementati.
+WAV in tempo reale, segmentare localmente il parlato e trascriverlo con whisper.cpp
+e accelerazione Metal. La cattura live non è ancora implementata.
 
 ## Principi
 
@@ -27,11 +27,24 @@ e UI non fanno parte della v1.
 
 ## Simulatore WAV
 
-`start` resta in foreground e normalizza il WAV in PCM mono 16 kHz, salvandolo in
-una nuova directory di sessione:
+Scaricare il modello quantizzato scelto per la v1:
 
 ```sh
-cargo run -- start --input-wav tests/fixtures/m1_stream.wav
+mkdir -p models
+curl -fL \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin \
+  -o models/ggml-small-q5_1.bin
+```
+
+Il file atteso occupa 190.085.487 byte e ha SHA-256
+`ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb`.
+`start` resta in foreground, normalizza il WAV in PCM mono 16 kHz e salva audio,
+metadati e transcript in una nuova directory di sessione:
+
+```sh
+cargo run --release -- start \
+  --input-wav benchmarks/fixtures/italian_synthetic.wav \
+  --model models/ggml-small-q5_1.bin
 ```
 
 Da un secondo terminale, usando la stessa `--sessions-dir` se diversa dal valore
@@ -53,8 +66,13 @@ silenzio finale e durata massima. Le soglie sono configurabili tramite le opzion
 `--vad-*` mostrate da `start --help`; i valori effettivi sono salvati in
 `session.json`. Coda e metriche di segmentazione sono visibili in `status.json`.
 
-In M2 `transcript.jsonl` resta intenzionalmente vuoto perché non esiste ancora un
-motore ASR. I comandi `devices`, `doctor` ed `export` restano stub.
+Il worker ASR usa una coda bounded separata e scrive ogni segmento finale,
+senza correzioni successive, in `transcript.jsonl`. Identità del modello,
+configurazione d'inferenza, backlog e real-time factor sono persistiti nella
+sessione. I comandi `devices`, `doctor` ed `export` restano stub.
+
+Il benchmark riproducibile, le fixture e i risultati di riferimento per Apple M5
+sono descritti in [`benchmarks/README.md`](benchmarks/README.md).
 
 ## Documentazione
 
@@ -65,7 +83,7 @@ motore ASR. I comandi `devices`, `doctor` ed `export` restano stub.
 
 ## Sviluppo locale
 
-Il progetto richiede Rust 1.85 o successivo. I controlli della milestone corrente
+Il progetto richiede Rust 1.88 o successivo. I controlli della milestone corrente
 sono:
 
 ```sh

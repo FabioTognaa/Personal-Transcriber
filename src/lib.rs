@@ -1,3 +1,4 @@
+pub mod asr;
 pub mod audio;
 pub mod cli;
 pub mod control;

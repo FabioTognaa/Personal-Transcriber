@@ -6,6 +6,47 @@ use uuid::Uuid;
 pub const TARGET_SAMPLE_RATE_HZ: u32 = 16_000;
 pub const TARGET_CHANNELS: u16 = 1;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InferenceStrategy {
+    Greedy,
+    BeamSearch,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InferenceConfig {
+    pub threads: i32,
+    pub strategy: InferenceStrategy,
+    pub best_of: i32,
+    pub beam_size: i32,
+    pub temperature: f32,
+    pub flash_attention: bool,
+    pub coreml: bool,
+}
+
+impl Default for InferenceConfig {
+    fn default() -> Self {
+        Self {
+            threads: std::thread::available_parallelism()
+                .map_or(4, |parallelism| parallelism.get().min(8) as i32),
+            strategy: InferenceStrategy::BeamSearch,
+            best_of: 5,
+            beam_size: 5,
+            temperature: 0.0,
+            flash_attention: true,
+            coreml: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelIdentity {
+    pub path: PathBuf,
+    pub name: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SegmenterConfig {
     pub energy_threshold: f32,
@@ -31,7 +72,9 @@ impl Default for SegmenterConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 #[serde(transparent)]
 pub struct TimestampUs(pub u64);
 
@@ -76,6 +119,15 @@ pub struct SegmentationMetrics {
     pub max_duration_splits: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AsrMetrics {
+    pub segments_transcribed: u64,
+    pub audio_duration_us: u64,
+    pub inference_duration_us: u64,
+    pub last_segment_end: TimestampUs,
+    pub real_time_factor_milli: u64,
+}
+
 impl PcmChunk {
     #[must_use]
     pub fn duration_us(&self) -> u64 {
@@ -103,12 +155,14 @@ pub enum SessionState {
 pub struct SessionConfig {
     pub language: String,
     pub model_path: Option<PathBuf>,
+    pub model: Option<ModelIdentity>,
     pub file_source: Option<PathBuf>,
     pub microphone_device: Option<String>,
     pub system_device: Option<String>,
     pub sample_rate_hz: u32,
     pub channels: u16,
     pub segmenter: SegmenterConfig,
+    pub inference: InferenceConfig,
 }
 
 impl SessionConfig {
@@ -117,12 +171,14 @@ impl SessionConfig {
         Self {
             language: "it".to_owned(),
             model_path,
+            model: None,
             file_source: None,
             microphone_device: None,
             system_device: None,
             sample_rate_hz: TARGET_SAMPLE_RATE_HZ,
             channels: TARGET_CHANNELS,
             segmenter: SegmenterConfig::default(),
+            inference: InferenceConfig::default(),
         }
     }
 }
@@ -137,7 +193,7 @@ pub struct SessionMetadata {
     pub config: SessionConfig,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TranscriptSegment {
     pub schema_version: u32,
     pub segment_id: Uuid,
@@ -147,6 +203,8 @@ pub struct TranscriptSegment {
     pub text: String,
     pub language: String,
     pub model: String,
+    pub model_sha256: String,
+    pub inference: InferenceConfig,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -210,6 +268,11 @@ pub struct SessionStatus {
     pub max_segmentation_queue_depth: usize,
     pub segmentation_replay_required: bool,
     pub segmentation: SegmentationMetrics,
+    pub asr_queue_depth: usize,
+    pub asr_queue_capacity: usize,
+    pub max_asr_queue_depth: usize,
+    pub asr_replay_required: bool,
+    pub asr: AsrMetrics,
     pub applied_control_generation: u64,
 }
 
@@ -272,6 +335,8 @@ mod tests {
             text: "Testo ASR  non corretto.".to_owned(),
             language: "it".to_owned(),
             model: "fixture-model".to_owned(),
+            model_sha256: "fixture-sha256".to_owned(),
+            inference: InferenceConfig::default(),
         };
 
         let encoded = serde_json::to_string(&segment).expect("segment should serialize");

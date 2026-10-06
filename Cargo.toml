@@ -2,7 +2,8 @@
 name = "live-transcript"
 version = "0.0.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
+default-run = "live-transcript"
 description = "Local-first CLI for recording and transcribing live meetings"
 license = "MIT"
 repository = "https://github.com/FabioTognaa/live-transcript"
@@ -11,12 +12,20 @@ repository = "https://github.com/FabioTognaa/live-transcript"
 clap = { version = "4.5.48", features = ["derive"] }
 crossbeam-channel = "0.5.15"
 hound = "3.5.1"
+libc = "0.2.190"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+sha2 = "0.10.9"
 thiserror = "2.0.17"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
+whisper-rs = { version = "=0.16.0", default-features = false }
+
+[features]
+default = ["metal"]
+metal = ["whisper-rs/metal"]
+coreml = ["whisper-rs/coreml"]
 
 [dev-dependencies]
 tempfile = "3.23.0"

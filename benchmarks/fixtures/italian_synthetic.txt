@@ -1,0 +1,1 @@
+Questa è una prova di trascrizione locale in italiano. Il programma conserva l'audio sul computer e non invia dati a servizi esterni. Durante una pausa la registrazione continua, mentre la trascrizione viene sospesa.

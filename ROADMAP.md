@@ -85,6 +85,8 @@ locale come sorgente, letto a velocità reale.
 
 ## M3 — Trascrizione locale e benchmark
 
+**Stato:** completata il 6 ottobre 2026.
+
 **Obiettivo:** integrare `whisper.cpp` e scegliere un modello italiano sostenibile
 sull'hardware Apple Silicon target.
 
@@ -103,6 +105,10 @@ sull'hardware Apple Silicon target.
 - Nessun testo è modificato da correttori o LLM dopo l'ASR.
 - Il real-time factor è inferiore a 1 con margine sul Mac target.
 - Il modello scelto, la dimensione e il metodo d'installazione sono documentati.
+
+Il modello scelto è Whisper small multilingue Q5_1 (190.085.487 byte). Sul Mac
+target Apple M5 il benchmark sintetico di 12,46 secondi ha misurato RTF mediano
+0,072 e p95 0,078; fixture, comandi e report completi sono in `benchmarks/`.
 
 ## M4 — Export e operatività CLI
 

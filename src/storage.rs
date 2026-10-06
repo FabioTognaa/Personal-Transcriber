@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Serialize;
 use uuid::Uuid;
 
-use crate::domain::{PcmChunk, SessionEvent, SessionMetadata, SessionStatus};
+use crate::domain::{PcmChunk, SessionEvent, SessionMetadata, SessionStatus, TranscriptSegment};
 use crate::schema::{CURRENT_SESSION_FILE, SessionPaths};
 use crate::{Error, Result};
 
@@ -20,6 +20,25 @@ pub struct SessionStorage {
     pub paths: SessionPaths,
     events: BufWriter<File>,
     audio: Option<hound::WavWriter<BufWriter<File>>>,
+}
+
+pub struct TranscriptWriter {
+    writer: BufWriter<File>,
+}
+
+impl TranscriptWriter {
+    pub fn open(path: &Path) -> Result<Self> {
+        Ok(Self {
+            writer: append_file(path)?,
+        })
+    }
+
+    pub fn append(&mut self, segment: &TranscriptSegment) -> Result<()> {
+        serde_json::to_writer(&mut self.writer, segment)?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()?;
+        Ok(())
+    }
 }
 
 impl SessionStorage {

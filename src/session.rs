@@ -8,10 +8,12 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{RecvTimeoutError, TrySendError, bounded};
 use uuid::Uuid;
 
+use crate::asr::{TranscribingSink, WhisperEngine, model_identity};
 use crate::audio::FileAudioSource;
 use crate::domain::{
-    ControlAction, ControlRequest, PcmChunk, SegmentationMetrics, SegmenterConfig, SessionConfig,
-    SessionEvent, SessionMetadata, SessionState, SessionStatus, SpeechSegment, TimestampUs,
+    AsrMetrics, ControlAction, ControlRequest, InferenceConfig, ModelIdentity, PcmChunk,
+    SegmentationMetrics, SegmenterConfig, SessionConfig, SessionEvent, SessionMetadata,
+    SessionState, SessionStatus, SpeechSegment, TimestampUs,
 };
 use crate::schema::{CURRENT_SESSION_FILE, SCHEMA_VERSION};
 use crate::segment::Segmenter;
@@ -32,10 +34,32 @@ pub struct StartOptions {
     pub microphone: Option<String>,
     pub system_audio: Option<String>,
     pub segmenter: SegmenterConfig,
+    pub inference: InferenceConfig,
+    pub model_identity: Option<ModelIdentity>,
 }
 
 pub trait SegmentSink {
+    fn start(&mut self, _session_id: Uuid, _transcript_path: &Path) -> Result<()> {
+        Ok(())
+    }
+
     fn accept(&mut self, segment: &SpeechSegment) -> Result<()>;
+
+    fn finish(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn status_handle(&self) -> Arc<Mutex<SegmentSinkStatus>> {
+        Arc::new(Mutex::new(SegmentSinkStatus::default()))
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SegmentSinkStatus {
+    pub queue_depth: usize,
+    pub queue_capacity: usize,
+    pub max_queue_depth: usize,
+    pub metrics: AsrMetrics,
 }
 
 #[derive(Debug, Default)]
@@ -48,7 +72,18 @@ impl SegmentSink for NullSegmentSink {
 }
 
 pub fn run(options: StartOptions) -> Result<PathBuf> {
-    run_with_sink(options, &mut NullSegmentSink)
+    let model_path = options.model.as_deref().ok_or(Error::ModelRequired)?;
+    let identity = model_identity(model_path)?;
+    let engine = WhisperEngine::load(model_path, &options.inference)?;
+    let mut sink = TranscribingSink::new(
+        engine,
+        identity.clone(),
+        options.language.clone(),
+        options.inference.clone(),
+    );
+    let mut options = options;
+    options.model_identity = Some(identity);
+    run_with_sink(options, &mut sink)
 }
 
 pub fn run_with_sink(
@@ -71,15 +106,19 @@ pub fn run_with_sink(
         config: SessionConfig {
             language: options.language,
             model_path: options.model,
+            model: options.model_identity,
             file_source: Some(options.input_wav),
             microphone_device: options.microphone,
             system_device: options.system_audio,
             sample_rate_hz: crate::domain::TARGET_SAMPLE_RATE_HZ,
             channels: crate::domain::TARGET_CHANNELS,
             segmenter: options.segmenter,
+            inference: options.inference,
         },
     };
     let mut storage = SessionStorage::create(&options.sessions_dir, &metadata)?;
+    sink.start(session_id, &storage.paths.transcript)?;
+    let sink_status_handle = sink.status_handle();
     let mut status = SessionStatus {
         schema_version: SCHEMA_VERSION,
         session_id,
@@ -94,6 +133,11 @@ pub fn run_with_sink(
         max_segmentation_queue_depth: 0,
         segmentation_replay_required: false,
         segmentation: SegmentationMetrics::default(),
+        asr_queue_depth: 0,
+        asr_queue_capacity: 0,
+        max_asr_queue_depth: 0,
+        asr_replay_required: false,
+        asr: AsrMetrics::default(),
         applied_control_generation: 0,
     };
 
@@ -114,7 +158,7 @@ pub fn run_with_sink(
     let segmentation_metrics = Arc::new(Mutex::new(SegmentationMetrics::default()));
     let segmenter = Segmenter::new(segmenter_config.clone())?;
 
-    thread::scope(|scope| -> Result<()> {
+    let processing_result = thread::scope(|scope| -> Result<()> {
         let producer_max = Arc::clone(&max_queue_depth);
         let producer = scope.spawn(move || {
             let stream_start = Instant::now();
@@ -180,6 +224,7 @@ pub fn run_with_sink(
                         {
                             segmentation_replay_required = true;
                             status.segmentation_replay_required = true;
+                            status.asr_replay_required = true;
                         }
                     }
                     update_status_for_chunk(&mut status, &chunk);
@@ -190,6 +235,7 @@ pub fn run_with_sink(
                         segmentation_sender.len(),
                         &max_segmentation_queue_depth,
                         &segmentation_metrics,
+                        &sink_status_handle,
                     );
                     storage.write_status(&status)?;
                 }
@@ -211,6 +257,7 @@ pub fn run_with_sink(
                 {
                     segmentation_replay_required = true;
                     status.segmentation_replay_required = true;
+                    status.asr_replay_required = true;
                 }
             }
             update_status_for_chunk(&mut status, &chunk);
@@ -233,19 +280,25 @@ pub fn run_with_sink(
         let (worker_result, sink) = segmentation_worker
             .join()
             .map_err(|_| Error::SegmentationWorkerPanicked)?;
-        worker_result?;
-        if segmentation_replay_required {
-            storage.finalize_audio()?;
-            let replay_metrics = replay_segmentation(
-                &storage.paths.mixed_audio,
-                &eligible_ranges,
-                segmenter_config,
-                sink,
-            )?;
-            *segmentation_metrics
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = replay_metrics;
-        }
+        let sink_processing_result: Result<()> = (|| {
+            worker_result?;
+            if segmentation_replay_required {
+                storage.finalize_audio()?;
+                let replay_metrics = replay_segmentation(
+                    &storage.paths.mixed_audio,
+                    &eligible_ranges,
+                    segmenter_config,
+                    sink,
+                )?;
+                *segmentation_metrics
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = replay_metrics;
+            }
+            Ok(())
+        })();
+        let finish_result = sink.finish();
+        finish_result?;
+        sink_processing_result?;
         refresh_queue_status(
             &mut status,
             0,
@@ -253,9 +306,27 @@ pub fn run_with_sink(
             0,
             &max_segmentation_queue_depth,
             &segmentation_metrics,
+            &sink_status_handle,
         );
+        refresh_sink_status(&mut status, &sink_status_handle);
         Ok(())
-    })?;
+    });
+
+    if let Err(error) = processing_result {
+        metadata.state = SessionState::Failed;
+        metadata.ended_at_unix_ms = Some(unix_time_ms()?);
+        status.state = SessionState::Failed;
+        storage.append_event(&SessionEvent::Error {
+            schema_version: SCHEMA_VERSION,
+            session_id,
+            at: status.audio_position,
+            message: error.to_string(),
+        })?;
+        storage.finalize_audio()?;
+        storage.write_metadata(&metadata)?;
+        storage.write_status(&status)?;
+        return Err(error);
+    }
 
     storage.append_event(&SessionEvent::SessionStopped {
         schema_version: SCHEMA_VERSION,
@@ -286,35 +357,27 @@ fn run_segmentation_worker(
     sink: &mut impl SegmentSink,
     shared_metrics: &Mutex<SegmentationMetrics>,
 ) -> Result<()> {
-    let mut completed_segments = Vec::new();
     while let Ok(command) = receiver.recv() {
-        let shutdown = matches!(
-            &command,
-            SegmentationCommand::ShutdownAndEmit | SegmentationCommand::ShutdownDiscard
-        );
-        let emit = !matches!(&command, SegmentationCommand::ShutdownDiscard);
-        let segments = match command {
-            SegmentationCommand::Chunk(chunk) => segmenter.push_chunk(chunk),
-            SegmentationCommand::Flush
-            | SegmentationCommand::ShutdownAndEmit
-            | SegmentationCommand::ShutdownDiscard => segmenter.flush(),
+        let (segments, shutdown, emit) = match command {
+            SegmentationCommand::Chunk(chunk) => (segmenter.push_chunk(chunk), false, true),
+            SegmentationCommand::Flush => (segmenter.flush(), false, true),
+            SegmentationCommand::ShutdownAndEmit => (segmenter.flush(), true, true),
+            SegmentationCommand::ShutdownDiscard => (segmenter.flush(), true, false),
         };
-        completed_segments.extend(segments);
+        if emit {
+            for segment in &segments {
+                sink.accept(segment)?;
+            }
+        }
         *shared_metrics
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = segmenter.metrics();
         if shutdown {
-            if emit {
-                for segment in &completed_segments {
-                    sink.accept(segment)?;
-                }
-            }
             return Ok(());
         }
     }
 
-    completed_segments.extend(segmenter.flush());
-    for segment in &completed_segments {
+    for segment in &segmenter.flush() {
         sink.accept(segment)?;
     }
     *shared_metrics
@@ -399,6 +462,7 @@ fn refresh_queue_status(
     segmentation_queue_depth: usize,
     max_segmentation_queue_depth: &AtomicUsize,
     segmentation_metrics: &Mutex<SegmentationMetrics>,
+    sink_status: &Mutex<SegmentSinkStatus>,
 ) {
     status.queue_depth = queue_depth;
     status.max_queue_depth = max_queue_depth.load(Ordering::Relaxed);
@@ -407,6 +471,17 @@ fn refresh_queue_status(
     status.segmentation = *segmentation_metrics
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    refresh_sink_status(status, sink_status);
+}
+
+fn refresh_sink_status(status: &mut SessionStatus, sink_status: &Mutex<SegmentSinkStatus>) {
+    let sink_status = *sink_status
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    status.asr_queue_depth = sink_status.queue_depth;
+    status.asr_queue_capacity = sink_status.queue_capacity;
+    status.max_asr_queue_depth = sink_status.max_queue_depth;
+    status.asr = sink_status.metrics;
 }
 
 fn apply_control_if_present(

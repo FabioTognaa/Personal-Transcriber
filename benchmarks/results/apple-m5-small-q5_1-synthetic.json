@@ -1,0 +1,79 @@
+{
+  "generated_at_unix_ms": 1791288426585,
+  "git_commit": "d25f345798e15fcd07258e804120054ed9bc5828",
+  "rust_version": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "whisper_rs_version": "0.16.0",
+  "whisper_cpp_version": "1.8.3",
+  "whisper_system_info": "WHISPER : COREML = 0 | OPENVINO = 0 | Metal : EMBED_LIBRARY = 1 | CPU : NEON = 1 | ARM_FMA = 1 | FP16_VA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | SME = 1 | ACCELERATE = 1 | REPACK = 1 | ",
+  "hardware": {
+    "os_version": "27.0.1",
+    "chip": "Apple M5",
+    "memory_bytes": "34359738368"
+  },
+  "model": {
+    "path": "models/ggml-small-q5_1.bin",
+    "name": "ggml-small-q5_1.bin",
+    "sha256": "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+    "size_bytes": 190085487,
+    "source": "https://huggingface.co/ggerganov/whisper.cpp"
+  },
+  "input": {
+    "path": "benchmarks/fixtures/italian_synthetic.wav",
+    "sha256": "54d1b1f06a4a064401b1f0e194b09ae15906feb165131f655fe88fa66e1fe4e7",
+    "duration_us": 12458562,
+    "sample_rate_hz": 16000,
+    "channels": 1
+  },
+  "inference": {
+    "threads": 8,
+    "strategy": "beam_search",
+    "best_of": 5,
+    "beam_size": 5,
+    "temperature": 0.0,
+    "flash_attention": true,
+    "coreml": false
+  },
+  "model_load_us": 10155099,
+  "warmup_iterations": 1,
+  "runs": [
+    {
+      "iteration": 0,
+      "inference_us": 857929,
+      "rtf": 0.06886260228106582,
+      "text": " Questa è una prova di trascrizione locale in italiano, il programma conserva l'audio sul computer e non inviadati a servizi esterni. Durante una pausa la registrazione continua, mentre la trascrizione viene sospesa."
+    },
+    {
+      "iteration": 1,
+      "inference_us": 972819,
+      "rtf": 0.07808437281927079,
+      "text": " Questa è una prova di trascrizione locale in italiano, il programma conserva l'audio sul computer e non inviadati a servizi esterni. Durante una pausa la registrazione continua, mentre la trascrizione viene sospesa."
+    },
+    {
+      "iteration": 2,
+      "inference_us": 940173,
+      "rtf": 0.0754640061991103,
+      "text": " Questa è una prova di trascrizione locale in italiano, il programma conserva l'audio sul computer e non inviadati a servizi esterni. Durante una pausa la registrazione continua, mentre la trascrizione viene sospesa."
+    },
+    {
+      "iteration": 3,
+      "inference_us": 875019,
+      "rtf": 0.0702343496785584,
+      "text": " Questa è una prova di trascrizione locale in italiano, il programma conserva l'audio sul computer e non inviadati a servizi esterni. Durante una pausa la registrazione continua, mentre la trascrizione viene sospesa."
+    },
+    {
+      "iteration": 4,
+      "inference_us": 897431,
+      "rtf": 0.07203327318192902,
+      "text": " Questa è una prova di trascrizione locale in italiano, il programma conserva l'audio sul computer e non inviadati a servizi esterni. Durante una pausa la registrazione continua, mentre la trascrizione viene sospesa."
+    }
+  ],
+  "median_rtf": 0.07203327318192902,
+  "p95_rtf": 0.07808437281927079,
+  "peak_rss_bytes": 528564224,
+  "quality": {
+    "reference_path": "benchmarks/fixtures/italian_synthetic.txt",
+    "reference_sha256": "db2d65054211a8bc31b4b7e312fe49d61601ed171e7af604c3719aa712960f6c",
+    "wer": 0.058823529411764705,
+    "cer": 0.0047169811320754715
+  }
+}

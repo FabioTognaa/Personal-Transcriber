@@ -23,3 +23,9 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
   preroll/postroll, silenzio finale e limite massimo di durata.
 - Worker e coda bounded dedicati alla segmentazione, con metriche osservabili e
   flush dei segmenti pendenti durante pausa e arresto.
+- Trascrizione locale italiana tramite whisper.cpp, accelerata con Metal e
+  configurabile dalla CLI.
+- Transcript canonico verbatim con identità SHA-256 del modello, parametri
+  d'inferenza e metriche ASR persistite per sessione.
+- Benchmark ASR riproducibile con fixture non sensibili, WER/CER, real-time factor,
+  picco RSS e report di riferimento per Apple M5.

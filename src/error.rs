@@ -25,6 +25,15 @@ pub enum Error {
     #[error("invalid segmenter configuration: {0}")]
     InvalidSegmenterConfig(String),
 
+    #[error("a local whisper model is required; pass --model <GGML .bin>")]
+    ModelRequired,
+
+    #[error("invalid inference configuration: {0}")]
+    InvalidInferenceConfig(String),
+
+    #[error("local ASR failed: {0}")]
+    Asr(String),
+
     #[error("timed out waiting for the session to apply a control request")]
     ControlTimeout,
 
@@ -39,6 +48,9 @@ pub enum Error {
 
     #[error("segmentation worker terminated unexpectedly")]
     SegmentationWorkerPanicked,
+
+    #[error("ASR worker terminated unexpectedly")]
+    AsrWorkerPanicked,
 
     #[error("the system clock is before the Unix epoch")]
     SystemClockBeforeUnixEpoch,
