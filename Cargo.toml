@@ -1,10 +1,10 @@
 [package]
 name = "personal-transcriber"
-version = "0.0.0"
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 default-run = "personal-transcriber"
-description = "Local-first CLI for recording and transcribing live meetings"
+description = "Local-first sCLI for recording and transcribing live meetings"
 license = "MIT"
 repository = "https://github.com/FabioTognaa/personal-transcriber"
 

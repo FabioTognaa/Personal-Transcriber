@@ -5,7 +5,7 @@ Tutte le modifiche rilevanti per gli utenti saranno documentate in questo file.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/) e il
 progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
-## [Unreleased]
+## [0.1.0]
 
 ### Changed
 
