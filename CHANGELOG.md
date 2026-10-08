@@ -5,6 +5,32 @@ Tutte le modifiche rilevanti per gli utenti saranno documentate in questo file.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/) e il
 progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
+## [0.2.0]
+
+### Added
+
+- Selezione del modello di trascrizione con `--model-preset` (`small`, `medium`,
+  `large-v3-turbo`, `large-v3`); `--model` resta disponibile per un file GGML
+  arbitrario e ha la precedenza. `doctor` verifica dimensione e SHA-256 di ogni
+  modello documentato.
+- Menu interattivo in `start` per scegliere il modello quando non si passano flag,
+  con stato scaricato/mancante dei preset, elenco degli altri `.bin` presenti e
+  possibilità di digitare un percorso. Compare solo su terminale e non interferisce
+  con script, CI o test.
+- Prompt iniziale ASR predefinito per lingua (`it`, `en`) e sostituibile con
+  `--asr-prompt`, per orientare punteggiatura, maiuscole e vocabolario senza
+  post-elaborazione. Il prompt effettivo è registrato in `session.json` e in ogni
+  riga di `transcript.jsonl`.
+
+### Fixed
+
+- Il recupero della segmentazione in differita non è più limitato a 30 minuti o
+  64 MiB: l'audio della sessione viene riletto in streaming, quindi le riunioni
+  lunghe vengono recuperate invece di fallire.
+- Durante il recupero non viene più trascritto due volte lo stesso intervallo di
+  audio, quindi non compaiono righe sovrapposte nel transcript.
+- `export` rifiuta di sovrascrivere il file puntatore della sessione corrente.
+
 ## [0.1.0]
 
 ### Changed
