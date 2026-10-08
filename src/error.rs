@@ -33,6 +33,12 @@ pub enum Error {
     #[error("no current session exists under {}", .0.display())]
     NoCurrentSession(PathBuf),
 
+    #[error(
+        "the current session at {} is incomplete (missing session data); start a new session",
+        .0.display()
+    )]
+    IncompleteSession(PathBuf),
+
     #[error("session has already finalized its audio: {}", .0.display())]
     SessionFinalized(PathBuf),
 

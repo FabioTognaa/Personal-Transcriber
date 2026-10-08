@@ -200,6 +200,9 @@ fn current_session(sessions_dir: &Path) -> Result<(CurrentSession, SessionPaths)
     if !paths.is_within(&sessions_dir) || root == sessions_dir {
         return Err(Error::InvalidSessionPath(root));
     }
+    if !paths.metadata.is_file() || !paths.status.is_file() {
+        return Err(Error::IncompleteSession(paths.root));
+    }
     current.root = paths.root.clone();
     Ok((current, paths))
 }
@@ -207,6 +210,7 @@ fn current_session(sessions_dir: &Path) -> Result<(CurrentSession, SessionPaths)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::{SESSION_METADATA_FILE, STATUS_FILE};
 
     #[test]
     fn current_session_rejects_a_root_outside_the_sessions_directory() {
@@ -236,6 +240,10 @@ mod tests {
         let sessions = temporary.path().join("sessions");
         let root = sessions.join("session-1");
         std::fs::create_dir_all(&root).expect("session directory should be created");
+        std::fs::write(root.join(SESSION_METADATA_FILE), b"{}")
+            .expect("metadata placeholder should be written");
+        std::fs::write(root.join(STATUS_FILE), b"{}")
+            .expect("status placeholder should be written");
         atomic_write_json(
             &sessions.join(CURRENT_SESSION_FILE),
             &CurrentSession {

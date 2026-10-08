@@ -6,10 +6,6 @@ use serde::Serialize;
 
 use crate::{Error, Result};
 
-const V1_MODEL_NAME: &str = "ggml-small-q5_1.bin";
-const V1_MODEL_SIZE_BYTES: u64 = 190_085_487;
-const V1_MODEL_SHA256: &str = "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb";
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AudioDevice {
     pub name: String,
@@ -261,34 +257,43 @@ fn model_check(model: &Path) -> DoctorCheck {
     match crate::validation::validate_existing_file(model, "model")
         .and_then(|_| crate::asr::model_identity(model))
     {
-        Ok(identity) => {
-            let expected_v1_model = identity.name == V1_MODEL_NAME;
-            let matches_v1 =
-                identity.size_bytes == V1_MODEL_SIZE_BYTES && identity.sha256 == V1_MODEL_SHA256;
-            DoctorCheck {
-                name: "model",
-                status: if !expected_v1_model || matches_v1 {
-                    CheckStatus::Pass
-                } else {
-                    CheckStatus::Fail
-                },
-                detail: if expected_v1_model && !matches_v1 {
-                    format!(
-                        "{} does not match the documented v1 model: got {} bytes, sha256 {}",
+        Ok(identity) => match crate::model::known_model(&identity.name) {
+            Some(known)
+                if known.size_bytes == identity.size_bytes && known.sha256 == identity.sha256 =>
+            {
+                DoctorCheck {
+                    name: "model",
+                    status: CheckStatus::Pass,
+                    detail: format!(
+                        "{} matches the documented {}-byte model (sha256 {})",
                         identity.path.display(),
                         identity.size_bytes,
                         identity.sha256
-                    )
-                } else {
-                    format!(
-                        "{} ({} bytes, sha256 {})",
-                        identity.path.display(),
-                        identity.size_bytes,
-                        identity.sha256
-                    )
-                },
+                    ),
+                }
             }
-        }
+            Some(_) => DoctorCheck {
+                name: "model",
+                status: CheckStatus::Fail,
+                detail: format!(
+                    "{} does not match the documented {}: got {} bytes, sha256 {}",
+                    identity.path.display(),
+                    identity.name,
+                    identity.size_bytes,
+                    identity.sha256
+                ),
+            },
+            None => DoctorCheck {
+                name: "model",
+                status: CheckStatus::Pass,
+                detail: format!(
+                    "{} ({} bytes, sha256 {}); not a documented model, identity cannot be verified",
+                    identity.path.display(),
+                    identity.size_bytes,
+                    identity.sha256
+                ),
+            },
+        },
         Err(error) => DoctorCheck {
             name: "model",
             status: CheckStatus::Fail,
@@ -348,7 +353,7 @@ fn device_checks() -> Vec<DoctorCheck> {
     }
 }
 
-fn is_blackhole(name: &str) -> bool {
+pub fn is_blackhole(name: &str) -> bool {
     name.to_ascii_lowercase().contains("blackhole")
 }
 
@@ -373,9 +378,23 @@ mod tests {
     #[test]
     fn corrupted_documented_model_is_a_failed_check() {
         let temporary = tempfile::tempdir().expect("temp directory should be created");
-        let model = temporary.path().join(V1_MODEL_NAME);
+        let model = temporary
+            .path()
+            .join(crate::model::ModelPreset::Small.file_name());
         std::fs::write(&model, b"not the documented model").expect("fixture should be written");
 
         assert_eq!(model_check(&model).status, CheckStatus::Fail);
+    }
+
+    #[test]
+    fn unknown_model_passes_without_identity_verification() {
+        let temporary = tempfile::tempdir().expect("temp directory should be created");
+        let model = temporary.path().join("custom-model.bin");
+        std::fs::write(&model, b"a custom local model").expect("fixture should be written");
+
+        let check = model_check(&model);
+
+        assert_eq!(check.status, CheckStatus::Pass);
+        assert!(check.detail.contains("cannot be verified"));
     }
 }

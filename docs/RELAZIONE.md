@@ -53,7 +53,7 @@ Python nel prodotto.
 | `hound` | Legge e scrive WAV. |
 | `crossbeam-channel` | Code a capacità fissa tra i thread. |
 | `whisper-rs` 0.16.0 | Binding Rust verso whisper.cpp. Di default compila con Metal, quindi l'inferenza usa la GPU Apple. Core ML esiste come feature separata ed è spenta. |
-| Modello `ggml-small-q5_1.bin` | Whisper small multilingue, quantizzato Q5_1, circa 190 MB. La v1 lo usa con lingua `it` o `en`. |
+| Modello GGML | Whisper multilingue, scelto con `--model-preset` (`small` Q5_1 ~190 MB, `medium` Q5_0 ~540 MB, `large-v3-turbo` Q8_0 ~874 MB, `large-v3` Q5_0 ~1,1 GB) oppure con `--model <percorso>`. Usato con lingua `it` o `en`. |
 | `sha2` | Calcola il SHA-256 del modello e lo salva su ogni segmento, così si sa quale file ha prodotto il testo. |
 | `serde` / `serde_json` | Legge e scrive JSON e JSONL. |
 | `uuid` | Identifica sessione e segmento. |
@@ -85,6 +85,18 @@ riprodotto a velocità reale.
 
 La lingua predefinita è `it`; `--language en` seleziona l'inglese. Non c'è
 rilevamento automatico e la scelta vale per tutta la sessione.
+
+Il modello si sceglie con `--model-preset` (`small` predefinito, `medium`,
+`large-v3-turbo`, `large-v3`) oppure con `--model <percorso>`, che ha la
+precedenza. Ogni preset punta a un file documentato sotto `models/`. Avviando
+`start` da terminale senza alcun flag del modello, compare un menu che elenca i
+preset (con stato scaricato/mancante) e gli altri file `.bin` in `models/`; Invio
+accetta `small`, un numero sceglie, `p` permette di digitare un percorso. Senza
+terminale (script, CI, test) il menu non compare e vale il default `small`.
+
+`start` applica anche un prompt iniziale a Whisper: quello predefinito della
+lingua, oppure quello passato con `--asr-prompt` (utile per un glossario di nomi e
+sigle). `--asr-prompt ""` lo disattiva.
 
 ## Il flusso, dall'inizio alla fine
 
@@ -253,8 +265,10 @@ frattempo, continua.
 
 Per ogni segmento nuovo Whisper gira con traduzione disattivata, lingua `it` o `en`
 scelta all'avvio, temperatura 0, beam search di ampiezza 5 e al massimo 8 thread.
-Flash attention è accesa. Il testo dei pezzi interni di Whisper viene concatenato
-così com'è, senza ripulitura.
+Flash attention è accesa. Se è impostato un prompt iniziale, viene anteposto al
+decoder: orienta punteggiatura, maiuscole e vocabolario, ma il testo resta l'uscita
+del motore ASR, senza correzioni successive. Il testo dei pezzi interni di Whisper
+viene concatenato così com'è, senza ripulitura.
 
 Il risultato è una riga di `transcript.jsonl`: identificatore, inizio, fine, testo,
 lingua, nome del modello, SHA-256 del file modello, e i parametri di inferenza
@@ -314,9 +328,11 @@ sessions/YYYY-MM-DD_HH-MM-SS/
 ```
 
 `session.json` è la descrizione stabile: lingua, percorso del modello, identità
-SHA-256, dispositivi o file di origine, soglie VAD, parametri ASR. `events.jsonl` è
-il diario. `transcript.jsonl` è la fonte da cui derivano tutti gli export. Lo schema
-attuale è la versione 3; un export di un'altra versione viene rifiutato.
+SHA-256, dispositivi o file di origine, soglie VAD, parametri ASR e prompt
+iniziale. `events.jsonl` è il diario. `transcript.jsonl` è la fonte da cui derivano
+tutti gli export. Lo schema attuale è la versione 3; un export di un'altra versione
+viene rifiutato. Il campo `prompt` è stato aggiunto dopo la versione 3 come campo
+opzionale, quindi i transcript precedenti restano leggibili.
 
 Gli stati possibili sono `starting`, `running`, `transcription_paused`, `stopping`,
 `completed`, `failed`.
@@ -338,11 +354,13 @@ ai WAV.
 
 `doctor` senza probe fallisce se manca una di queste condizioni: macOS su Apple
 Silicon (`aarch64`), directory di sessione utilizzabile, almeno 64 MiB liberi,
-modello leggibile, almeno un input, BlackHole visibile. Se il file si chiama
-`ggml-small-q5_1.bin`, dimensione e SHA-256 devono essere quelli documentati. Un
-altro nome di modello, se il file non è vuoto, passa. Sotto 1 GiB libero il disco è
-un avviso; sotto 64 MiB è un fallimento. `ready: false` produce un exit code diverso
-da zero.
+modello leggibile, almeno un input, BlackHole visibile. Se il file corrisponde a un
+modello documentato (`ggml-small-q5_1.bin`, `ggml-medium-q5_0.bin`,
+`ggml-large-v3-turbo-q8_0.bin`, `ggml-large-v3-q5_0.bin` e le loro varianti in
+`src/model.rs`), dimensione e SHA-256 devono essere quelli attesi. Un altro nome di
+modello, se il file non è vuoto, passa con un avviso nel dettaglio. Sotto 1 GiB
+libero il disco è un avviso; sotto 64 MiB è un fallimento. `ready: false` produce un
+exit code diverso da zero.
 
 Il permesso del microfono e il routing vero della call restano non verificati finché
 non si usa `--probe-audio`, e anche quello dice solo se in quei secondi è arrivato

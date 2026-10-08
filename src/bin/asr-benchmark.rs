@@ -1,17 +1,16 @@
-use std::fs::{self, File};
-use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
-use personal_transcriber::asr::{AsrEngine, WhisperEngine, model_identity};
+use personal_transcriber::asr::{AsrEngine, WhisperEngine, model_identity, sha256_file};
 use personal_transcriber::audio::FileAudioSource;
 use personal_transcriber::domain::{
     InferenceConfig, InferenceStrategy, SpeechSegment, TARGET_SAMPLE_RATE_HZ, TimestampUs,
+    default_threads,
 };
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 #[derive(Debug, Parser)]
 #[command(about = "Reproducible local whisper.cpp benchmark")]
@@ -24,6 +23,10 @@ struct Args {
     reference: Option<PathBuf>,
     #[arg(long)]
     output: PathBuf,
+    #[arg(long, default_value = "it", value_parser = ["it", "en"])]
+    language: String,
+    #[arg(long)]
+    prompt: Option<String>,
     #[arg(long, default_value_t = 1)]
     warmup: usize,
     #[arg(long, default_value_t = 5)]
@@ -111,6 +114,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         temperature: 0.0,
         flash_attention: args.flash_attention,
         coreml: args.coreml,
+        prompt: args.prompt.clone(),
     };
     let identity = model_identity(&args.model)?;
     let source = FileAudioSource::open(&args.input)?;
@@ -129,12 +133,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut engine = WhisperEngine::load(&args.model, &config)?;
     let model_load_us = elapsed_us(load_started);
     for _ in 0..args.warmup {
-        engine.transcribe(&segment, "it", &config)?;
+        engine.transcribe(&segment, &args.language, &config)?;
     }
 
     let mut runs = Vec::with_capacity(args.iterations);
     for iteration in 0..args.iterations {
-        let output = engine.transcribe(&segment, "it", &config)?;
+        let output = engine.transcribe(&segment, &args.language, &config)?;
         runs.push(Run {
             iteration,
             inference_us: output.inference_duration_us,
@@ -252,20 +256,6 @@ fn percentile(sorted: &[f64], percentile: f64) -> f64 {
     sorted[index]
 }
 
-fn sha256_file(path: &Path) -> Result<String, Box<dyn std::error::Error>> {
-    let mut file = File::open(path)?;
-    let mut hasher = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        hasher.update(&buffer[..read]);
-    }
-    Ok(format!("{:x}", hasher.finalize()))
-}
-
 fn command_output(program: &str, arguments: &[&str]) -> String {
     Command::new(program)
         .args(arguments)
@@ -288,10 +278,6 @@ fn peak_rss_bytes() -> Option<u64> {
     }
     let usage = unsafe { usage.assume_init() };
     u64::try_from(usage.ru_maxrss).ok()
-}
-
-fn default_threads() -> i32 {
-    std::thread::available_parallelism().map_or(4, |count| count.get().min(8) as i32)
 }
 
 #[cfg(test)]

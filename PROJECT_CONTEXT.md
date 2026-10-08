@@ -165,6 +165,18 @@ Il modello iniziale e la sua dimensione saranno scelti tramite benchmark sul Mac
 target. Il criterio di accettazione è un real-time factor inferiore a 1 con margine,
 non soltanto una buona qualità apparente.
 
+Il modello è selezionabile per sessione tramite preset documentati (`small`,
+`medium`, `large-v3-turbo`, `large-v3`) oppure con un percorso GGML esplicito. Ogni
+preset è verificato per dimensione e SHA-256. `large-v3-turbo` è il modello
+consigliato quando l'accuratezza conta più del margine RTF; su Apple Silicon M5
+resta ben sotto RTF 1 (vedi `benchmarks/README.md`).
+
+All'ASR viene fornito un prompt iniziale predefinito per lingua, sostituibile per
+sessione con `--asr-prompt`. È un input del motore ASR, non una correzione
+successiva: non viola la definizione di "raw" e non introduce un secondo modello. Il
+prompt effettivo è registrato in `session.json` e in ogni record di
+`transcript.jsonl`.
+
 ### Concorrenza e backpressure
 
 Acquisizione, persistenza audio e inferenza hanno velocità differenti. Le code

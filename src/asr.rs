@@ -3,9 +3,10 @@ use std::io::Read;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::time::{Instant, UNIX_EPOCH};
 
 use crossbeam_channel::{Sender, bounded};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
@@ -15,7 +16,7 @@ use crate::domain::{
 };
 use crate::schema::SCHEMA_VERSION;
 use crate::session::{SegmentSink, SegmentSinkStatus};
-use crate::storage::TranscriptWriter;
+use crate::storage::{TranscriptWriter, atomic_write_json, read_json};
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +35,25 @@ pub trait AsrEngine: Send + 'static {
 }
 
 const ASR_QUEUE_CAPACITY: usize = 8;
+
+/// Built-in initial prompt for a supported language.
+///
+/// The prompt is a short, natural preamble that biases Whisper toward correct
+/// punctuation, capitalization and accents. It is deliberately generic so it
+/// does not inject meeting-specific content. Users can override it with
+/// `--asr-prompt` to add a domain glossary (names, acronyms, product terms).
+#[must_use]
+pub fn default_initial_prompt(language: &str) -> Option<&'static str> {
+    match language {
+        "it" => Some(
+            "Trascrizione in italiano di una riunione. Usa una punteggiatura corretta, le maiuscole appropriate e gli accenti.",
+        ),
+        "en" => {
+            Some("Transcript in English of a meeting. Use correct punctuation and capitalization.")
+        }
+        _ => None,
+    }
+}
 
 enum AsrCommand {
     Segment(SpeechSegment),
@@ -240,6 +260,9 @@ impl AsrEngine for WhisperEngine {
         parameters.set_n_threads(config.threads);
         parameters.set_translate(false);
         parameters.set_language(Some(language));
+        if let Some(prompt) = config.prompt.as_deref().filter(|prompt| !prompt.is_empty()) {
+            parameters.set_initial_prompt(prompt);
+        }
         parameters.set_temperature(config.temperature);
         parameters.set_print_special(false);
         parameters.set_print_progress(false);
@@ -274,15 +297,9 @@ impl AsrEngine for WhisperEngine {
     }
 }
 
-pub fn model_identity(path: &Path) -> Result<ModelIdentity> {
-    let metadata = std::fs::metadata(path)?;
-    if !metadata.is_file() || metadata.len() == 0 {
-        return Err(Error::Asr(format!(
-            "model is not a non-empty file: {}",
-            path.display()
-        )));
-    }
-
+/// SHA-256 of a file, read in bounded chunks so large files are never loaded
+/// fully into memory.
+pub fn sha256_file(path: &Path) -> Result<String> {
     let mut file = File::open(path)?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 1024 * 1024];
@@ -293,7 +310,58 @@ pub fn model_identity(path: &Path) -> Result<ModelIdentity> {
         }
         hasher.update(&buffer[..read]);
     }
-    let sha256 = format!("{:x}", hasher.finalize());
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedModelIdentity {
+    size_bytes: u64,
+    modified_nanos: u64,
+    sha256: String,
+}
+
+/// SHA-256 of `path`, reusing a `<name>.sha256` sidecar when the size and
+/// modification time are unchanged, so multi-gigabyte models are not re-hashed
+/// on every `start`. Best effort: a missing or unreadable cache just means the
+/// file is hashed again.
+fn cached_sha256(path: &Path, metadata: &std::fs::Metadata) -> Result<String> {
+    let modified_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .and_then(|duration| u64::try_from(duration.as_nanos()).ok());
+    let cache_path = path.with_extension("sha256");
+    if let Some(modified_nanos) = modified_nanos
+        && let Ok(cached) = read_json::<CachedModelIdentity>(&cache_path)
+        && cached.size_bytes == metadata.len()
+        && cached.modified_nanos == modified_nanos
+    {
+        return Ok(cached.sha256);
+    }
+    let sha256 = sha256_file(path)?;
+    if let Some(modified_nanos) = modified_nanos {
+        let _ = atomic_write_json(
+            &cache_path,
+            &CachedModelIdentity {
+                size_bytes: metadata.len(),
+                modified_nanos,
+                sha256: sha256.clone(),
+            },
+        );
+    }
+    Ok(sha256)
+}
+
+pub fn model_identity(path: &Path) -> Result<ModelIdentity> {
+    let metadata = std::fs::metadata(path)?;
+    if !metadata.is_file() || metadata.len() == 0 {
+        return Err(Error::Asr(format!(
+            "model is not a non-empty file: {}",
+            path.display()
+        )));
+    }
+
+    let sha256 = cached_sha256(path, &metadata)?;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -324,5 +392,42 @@ pub fn validate_inference_config(config: &InferenceConfig) -> Result<()> {
             "temperature must be finite and non-negative".to_owned(),
         ));
     }
+    if let Some(prompt) = config.prompt.as_deref()
+        && prompt.contains('\0')
+    {
+        return Err(Error::InvalidInferenceConfig(
+            "initial prompt must not contain a null byte".to_owned(),
+        ));
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn model_identity_reuses_the_sidecar_cache() {
+        let temporary = tempfile::tempdir().expect("temporary directory should be created");
+        let model = temporary.path().join("model.bin");
+        std::fs::write(&model, b"some model bytes").expect("model fixture should be written");
+
+        let first = model_identity(&model).expect("identity should be computed");
+        let cache_path = model.with_extension("sha256");
+        let mut cached: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&cache_path).expect("cache sidecar should exist"),
+        )
+        .expect("cache should be valid JSON");
+        cached["sha256"] = serde_json::Value::String("cached-value".to_owned());
+        std::fs::write(
+            &cache_path,
+            serde_json::to_vec(&cached).expect("cache should serialize"),
+        )
+        .expect("cache should be rewritten");
+
+        let second = model_identity(&model).expect("identity should come from the cache");
+
+        assert_eq!(first.sha256.len(), 64);
+        assert_eq!(second.sha256, "cached-value");
+    }
 }

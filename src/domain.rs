@@ -22,19 +22,33 @@ pub struct InferenceConfig {
     pub temperature: f32,
     pub flash_attention: bool,
     pub coreml: bool,
+    /// Initial prompt passed to Whisper before decoding.
+    ///
+    /// It guides punctuation, capitalization and vocabulary without any
+    /// post-processing. `None` (and the empty string) means no prompt. Added
+    /// after schema version 3, so it is optional when reading older transcripts.
+    #[serde(default)]
+    pub prompt: Option<String>,
+}
+
+/// whisper.cpp thread count: available parallelism capped at eight, falling
+/// back to four when the count cannot be read.
+#[must_use]
+pub fn default_threads() -> i32 {
+    std::thread::available_parallelism().map_or(4, |parallelism| parallelism.get().min(8) as i32)
 }
 
 impl Default for InferenceConfig {
     fn default() -> Self {
         Self {
-            threads: std::thread::available_parallelism()
-                .map_or(4, |parallelism| parallelism.get().min(8) as i32),
+            threads: default_threads(),
             strategy: InferenceStrategy::BeamSearch,
             best_of: 5,
             beam_size: 5,
             temperature: 0.0,
             flash_attention: true,
             coreml: false,
+            prompt: None,
         }
     }
 }

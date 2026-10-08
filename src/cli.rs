@@ -1,8 +1,12 @@
-use std::path::PathBuf;
+use std::io::{IsTerminal, Write};
+use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::domain::{ControlAction, InferenceConfig, InferenceStrategy, SegmenterConfig};
+use crate::domain::{
+    ControlAction, InferenceConfig, InferenceStrategy, SegmenterConfig, default_threads,
+};
+use crate::model::ModelPreset;
 use crate::session::StartOptions;
 use crate::{Error, Result};
 
@@ -45,13 +49,15 @@ pub enum Command {
     Export(ExportArgs),
 }
 
-const DEFAULT_MODEL: &str = "models/ggml-small-q5_1.bin";
-
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
-    /// Local whisper.cpp GGML model to validate.
-    #[arg(long, default_value = DEFAULT_MODEL)]
-    pub model: PathBuf,
+    /// Local whisper.cpp GGML model path. Overrides `--model-preset`.
+    #[arg(long)]
+    pub model: Option<PathBuf>,
+
+    /// Built-in model preset resolved under `models/`.
+    #[arg(long, value_enum)]
+    pub model_preset: Option<ModelPreset>,
 
     /// Open both live inputs and require signal on each.
     #[arg(long)]
@@ -76,9 +82,15 @@ pub struct StartArgs {
     #[arg(long)]
     pub input_wav: Option<PathBuf>,
 
-    /// Local whisper.cpp GGML model path.
-    #[arg(long, default_value = DEFAULT_MODEL)]
-    pub model: PathBuf,
+    /// Local whisper.cpp GGML model path. Overrides `--model-preset`.
+    #[arg(long)]
+    pub model: Option<PathBuf>,
+
+    /// Built-in model preset resolved under `models/`; ignored when `--model` is set.
+    /// Without either flag, `start` asks interactively on a terminal, otherwise
+    /// it uses the `small` preset.
+    #[arg(long, value_enum)]
+    pub model_preset: Option<ModelPreset>,
 
     /// Input device used for the local microphone.
     #[arg(long, conflicts_with = "input_wav")]
@@ -91,6 +103,11 @@ pub struct StartArgs {
     /// Spoken language: `it` or `en`.
     #[arg(long, default_value = "it", value_parser = ["it", "en"])]
     pub language: String,
+
+    /// Initial prompt that guides punctuation and vocabulary. Defaults to a
+    /// built-in prompt for `--language`; pass an empty string to disable it.
+    #[arg(long)]
+    pub asr_prompt: Option<String>,
 
     /// RMS threshold above which a PCM chunk is treated as voice.
     #[arg(long, default_value_t = 0.02)]
@@ -164,10 +181,6 @@ impl From<DecoderStrategy> for InferenceStrategy {
     }
 }
 
-fn default_threads() -> i32 {
-    std::thread::available_parallelism().map_or(4, |count| count.get().min(8) as i32)
-}
-
 #[derive(Debug, Args)]
 pub struct ExportArgs {
     /// Session directory containing transcript.jsonl.
@@ -202,16 +215,21 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
             Ok(())
         }
         Command::Doctor(args) => {
+            let model = args.model.clone().unwrap_or_else(|| {
+                args.model_preset
+                    .unwrap_or(ModelPreset::Small)
+                    .default_path()
+            });
             let report = if args.probe_audio {
                 crate::diagnostics::doctor_with_audio_probe(
                     &sessions_dir,
-                    &args.model,
+                    &model,
                     args.microphone.as_deref(),
                     args.system_audio.as_deref(),
                     std::time::Duration::from_secs(args.probe_seconds),
                 )
             } else {
-                crate::diagnostics::doctor(&sessions_dir, &args.model)
+                crate::diagnostics::doctor(&sessions_dir, &model)
             };
             print_json(&report)?;
             if report.ready {
@@ -221,10 +239,14 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
             }
         }
         Command::Start(args) => {
+            let model = resolve_model_path(args.model, args.model_preset)
+                .or_else(select_model_interactively)
+                .unwrap_or_else(|| ModelPreset::Small.default_path());
+            let prompt = resolve_initial_prompt(args.asr_prompt, &args.language);
             let root = crate::session::run(StartOptions {
                 sessions_dir,
                 input_wav: args.input_wav,
-                model: Some(args.model),
+                model: Some(model),
                 language: args.language,
                 microphone: args.microphone,
                 system_audio: args.system_audio,
@@ -245,6 +267,7 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
                     temperature: args.asr_temperature,
                     flash_attention: args.asr_flash_attention,
                     coreml: args.asr_coreml,
+                    prompt,
                 },
                 model_identity: None,
             })?;
@@ -304,6 +327,140 @@ fn print_status(status: &crate::domain::SessionStatus) -> Result<()> {
     print_json(status)
 }
 
+/// Resolve the initial prompt: explicit override, otherwise the built-in
+/// language default. An explicit empty string disables the prompt entirely.
+fn resolve_initial_prompt(override_prompt: Option<String>, language: &str) -> Option<String> {
+    match override_prompt {
+        Some(prompt) if prompt.trim().is_empty() => None,
+        Some(prompt) => Some(prompt),
+        None => crate::asr::default_initial_prompt(language).map(str::to_owned),
+    }
+}
+
+/// Resolve the model from explicit arguments only (no interactive prompt).
+/// `--model` wins over `--model-preset`; `None` means "ask or use the default".
+fn resolve_model_path(model: Option<PathBuf>, preset: Option<ModelPreset>) -> Option<PathBuf> {
+    model.or_else(|| preset.map(ModelPreset::default_path))
+}
+
+struct ModelOption {
+    label: String,
+    path: PathBuf,
+    available: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum MenuChoice {
+    Default,
+    Select(usize),
+    Custom,
+}
+
+/// Parse a menu answer: empty is the default, a valid number selects an option,
+/// `p` asks for a custom path. Anything else falls back to the default.
+fn parse_menu_selection(input: &str, option_count: usize) -> MenuChoice {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return MenuChoice::Default;
+    }
+    if trimmed.eq_ignore_ascii_case("p") {
+        return MenuChoice::Custom;
+    }
+    match trimmed.parse::<usize>() {
+        Ok(number) if (1..=option_count).contains(&number) => MenuChoice::Select(number - 1),
+        _ => MenuChoice::Default,
+    }
+}
+
+/// Presets first (always listed, marked available or not), then any other GGML
+/// files found in `models_dir`.
+fn model_menu_options(models_dir: &Path) -> Vec<ModelOption> {
+    let mut options: Vec<ModelOption> = ModelPreset::ALL
+        .iter()
+        .map(|preset| {
+            let path = preset.default_path();
+            ModelOption {
+                label: preset.label().to_owned(),
+                available: path.is_file(),
+                path,
+            }
+        })
+        .collect();
+    let known: Vec<PathBuf> = options.iter().map(|option| option.path.clone()).collect();
+    let Ok(entries) = std::fs::read_dir(models_dir) else {
+        return options;
+    };
+    let mut extra: Vec<ModelOption> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(std::ffi::OsStr::to_str) == Some("bin"))
+        .filter(|path| !known.contains(path))
+        .map(|path| ModelOption {
+            label: path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string()),
+            available: true,
+            path,
+        })
+        .collect();
+    extra.sort_by(|left, right| left.label.cmp(&right.label));
+    options.extend(extra);
+    options
+}
+
+fn print_model_menu(options: &[ModelOption]) {
+    println!("Seleziona il modello per la trascrizione:");
+    for (index, option) in options.iter().enumerate() {
+        let status = if option.available {
+            "scaricato"
+        } else {
+            "mancante"
+        };
+        println!(
+            "  {}) {:<16} [{}] {}",
+            index + 1,
+            option.label,
+            status,
+            option.path.display()
+        );
+    }
+    print!("Invio = default (small), numero = scegli, p = percorso personalizzato: ");
+    let _ = std::io::stdout().flush();
+}
+
+/// Interactive model picker. Shown only on an interactive terminal and only when
+/// no model flag was given. Returns `None` to fall back to the `small` preset.
+fn select_model_interactively() -> Option<PathBuf> {
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        return None;
+    }
+    let options = model_menu_options(Path::new(crate::model::MODELS_DIR));
+    print_model_menu(&options);
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() {
+        return None;
+    }
+    match parse_menu_selection(&input, options.len()) {
+        MenuChoice::Default => None,
+        MenuChoice::Select(index) => options.get(index).map(|option| option.path.clone()),
+        MenuChoice::Custom => {
+            print!("Percorso del modello (.bin): ");
+            let _ = std::io::stdout().flush();
+            let mut path = String::new();
+            if std::io::stdin().read_line(&mut path).is_err() {
+                return None;
+            }
+            let path = path.trim();
+            if path.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(path))
+            }
+        }
+    }
+}
+
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
     println!("{}", serde_json::to_string_pretty(value)?);
     Ok(())
@@ -340,12 +497,12 @@ mod tests {
             args.input_wav,
             Some(PathBuf::from("tests/fixtures/m1_stream.wav"))
         );
-        assert_eq!(args.model, PathBuf::from("models/fixture.bin"));
+        assert_eq!(args.model, Some(PathBuf::from("models/fixture.bin")));
         assert_eq!(cli.sessions_dir, PathBuf::from("sessions"));
     }
 
     #[test]
-    fn start_defaults_to_the_small_model() {
+    fn start_defaults_to_the_small_model_preset() {
         let cli = Cli::try_parse_from(["personal-transcriber", "start"])
             .expect("start command should parse");
 
@@ -353,7 +510,106 @@ mod tests {
             panic!("expected start command");
         };
 
-        assert_eq!(args.model, PathBuf::from(DEFAULT_MODEL));
+        assert_eq!(args.model, None);
+        assert_eq!(args.model_preset, None);
+        assert_eq!(
+            resolve_model_path(args.model, args.model_preset)
+                .unwrap_or_else(|| ModelPreset::Small.default_path()),
+            PathBuf::from("models/ggml-small-q5_1.bin")
+        );
+    }
+
+    #[test]
+    fn start_accepts_a_model_preset() {
+        let cli = Cli::try_parse_from([
+            "personal-transcriber",
+            "start",
+            "--model-preset",
+            "large-v3-turbo",
+        ])
+        .expect("start command should parse");
+
+        let Command::Start(args) = cli.command else {
+            panic!("expected start command");
+        };
+
+        assert_eq!(args.model_preset, Some(ModelPreset::LargeV3Turbo));
+        assert_eq!(
+            args.model_preset.unwrap().default_path(),
+            PathBuf::from("models/ggml-large-v3-turbo-q8_0.bin")
+        );
+    }
+
+    #[test]
+    fn explicit_model_path_overrides_the_preset() {
+        let cli = Cli::try_parse_from([
+            "personal-transcriber",
+            "start",
+            "--model-preset",
+            "large-v3",
+            "--model",
+            "models/custom.bin",
+        ])
+        .expect("start command should parse");
+
+        let Command::Start(args) = cli.command else {
+            panic!("expected start command");
+        };
+
+        assert_eq!(
+            resolve_model_path(args.model, args.model_preset),
+            Some(PathBuf::from("models/custom.bin"))
+        );
+    }
+
+    #[test]
+    fn model_resolution_uses_the_preset_or_nothing() {
+        assert_eq!(
+            resolve_model_path(None, Some(ModelPreset::LargeV3Turbo)),
+            Some(PathBuf::from("models/ggml-large-v3-turbo-q8_0.bin"))
+        );
+        assert_eq!(resolve_model_path(None, None), None);
+    }
+
+    #[test]
+    fn menu_selection_parsing() {
+        assert_eq!(parse_menu_selection("", 4), MenuChoice::Default);
+        assert_eq!(parse_menu_selection("  2 ", 4), MenuChoice::Select(1));
+        assert_eq!(parse_menu_selection("5", 4), MenuChoice::Default);
+        assert_eq!(parse_menu_selection("0", 4), MenuChoice::Default);
+        assert_eq!(parse_menu_selection("p", 4), MenuChoice::Custom);
+        assert_eq!(parse_menu_selection("abc", 4), MenuChoice::Default);
+    }
+
+    #[test]
+    fn menu_lists_presets_then_extra_ggml_files() {
+        let temporary = tempfile::tempdir().expect("temp directory should be created");
+        std::fs::write(temporary.path().join("custom.bin"), b"x")
+            .expect("fixture should be written");
+        std::fs::write(temporary.path().join("notes.txt"), b"x")
+            .expect("fixture should be written");
+
+        let options = model_menu_options(temporary.path());
+
+        assert_eq!(options.len(), ModelPreset::ALL.len() + 1);
+        assert!(
+            options
+                .iter()
+                .any(|option| option.label == "custom.bin" && option.available)
+        );
+        assert!(!options.iter().any(|option| option.label == "notes.txt"));
+    }
+
+    #[test]
+    fn default_prompt_matches_the_language_and_can_be_disabled() {
+        assert!(resolve_initial_prompt(None, "it").is_some());
+        assert!(resolve_initial_prompt(None, "en").is_some());
+        assert_eq!(resolve_initial_prompt(None, "fr"), None);
+        assert_eq!(resolve_initial_prompt(Some(String::new()), "it"), None);
+        assert_eq!(
+            resolve_initial_prompt(Some("glossario".to_owned()), "it"),
+            Some("glossario".to_owned())
+        );
     }
 
     #[test]

@@ -1,46 +1,52 @@
 # Sessioni
 
-Ogni `start` crea una cartella qui. Il nome è l'ora locale di inizio:
+In questa cartella finiscono tutti i dati di ogni registrazione vocale.
+
+Ogni `start` crea una cartella, che viene nominata in base al momento nel quale si avvia la registrazione, nel formato:
 
 ```text
 YYYY-MM-DD_HH-MM-SS
 ```
 
-Esempio: `2026-10-07_01-17-03`. L'ordinamento alfabetico coincide con quello
-cronologico. Se due sessioni partono nello stesso secondo, la seconda diventa
-`2026-10-07_01-17-03_2`. L'identificatore stabile resta l'UUID in `session.json`,
-non il nome della cartella.
+L'ordinamento alfabetico coincide con quello cronologico. 
+Se due sessioni partono nello stesso secondo, la seconda assume lo stesso nome aggiungendo un intero in fondo per discriminare il nome. 
+Questo nome comunque non funge da identificare. Puoi trovare l'UUID `current-session.json`.
 
-Le registrazioni e i transcript restano sul disco locale e non vanno nel
-repository. Questo README è l'unico file della directory tracciato da git.
+Ogni registrazione e transcript resta sul disco locale e viene ignorata nel
+repository.
+
+In ogni cartella si possono trovare:
+
+- ### /audio:
+  cartella nella quale vengono salvati 3 file in formato .wav, che rappresentano la tracce audio di microfono, sistema dal quale blackhole riceve il segnale in output, ed una traccia con questi 2 canali mixati
+
+- ### control.json:
+  un file di log di tutti i comandi di controllo del trascriber che vengono passati una volta che il programma è in esecuzione
+
+- ### session.json:
+  file di metadati dell'intera sessione
+
+- ### status.json:
+  file di metadati relativo alla registrazione (chunking, lavoro del modello asr...) che si aggiorna a runtime
+
+- ### transcript.jsonl:
+  file nel quale vengono salvati i segmenti di testo ricostruiti da Whisper
+
+
+- ### .control.lock .runner.lock:
+  sono token che attestano l'univocità della sessione
+
+- current-session.json:
+  file co le variabili globali della sessione: il percorso assoluto della cartella e l'UUID della sessione
 
 ## Layout di una sessione
 
-```text
-sessions/2026-10-07_01-17-03/
-  session.json          metadati: UUID, stato, orari, lingua, modello, VAD, ASR
-  status.json           fotografia runtime (coda, posizione audio, metriche)
-  events.jsonl          avvio, pause, riprese, stop, errori
-  transcript.jsonl      segmenti finali, una riga JSON ciascuno
-  control.json          ultimo comando pause/resume/stop richiesto
-  audio/mixed.wav       mix mono 16 kHz passato alla trascrizione
-  audio/microphone.wav  solo cattura live: microfono
-  audio/system.wav      solo cattura live: audio di sistema (BlackHole)
-```
 
-`transcript.jsonl` è la fonte macchina: testo, timestamp relativi all'audio,
-lingua, identità del modello e parametri di inferenza. Per leggerlo come testo:
+`transcript.jsonl` è la fonte macchina: contiene metadati aggiuntivi oltre ai segmenti di codice.
+
+## Trasformare transcript.jsonl in raw text 
 
 ```sh
-cargo run -- export sessions/2026-10-07_01-17-03 --format markdown
-cargo run -- export sessions/2026-10-07_01-17-03 --format text
+cargo run -- export sessions/cartella_di_sessione --format markdown
+cargo run -- export sessions/cartella_di_sessione --format text
 ```
-
-## File nella directory `sessions/`, non nella cartella della sessione
-
-- `current-session.json` punta alla sessione attiva o all'ultima recuperata.
-- `.runner.lock` impedisce un secondo processo di trascrizione in parallelo.
-- `.control.lock` serializza `pause`, `resume` e `stop`.
-
-I lock sono vuoti di proposito: il contenuto è il lock del sistema operativo, non
-un documento da aprire.

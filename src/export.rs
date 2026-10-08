@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 use crate::domain::{SessionMetadata, SessionState, TimestampUs, TranscriptSegment};
-use crate::schema::{SCHEMA_VERSION, SESSION_METADATA_FILE, SessionPaths, TRANSCRIPT_FILE};
+use crate::schema::{
+    CURRENT_SESSION_FILE, SCHEMA_VERSION, SESSION_METADATA_FILE, SessionPaths, TRANSCRIPT_FILE,
+};
 use crate::storage::read_json;
 use crate::{Error, Result};
 
@@ -213,7 +215,7 @@ fn ensure_safe_output(session: &Path, output: Option<&Path>) -> Result<()> {
                 .ok_or_else(|| Error::InvalidExport("output has no filename".to_owned()))?,
         )
     };
-    let protected = [
+    let mut protected = vec![
         paths.metadata,
         paths.events,
         paths.transcript,
@@ -223,6 +225,13 @@ fn ensure_safe_output(session: &Path, output: Option<&Path>) -> Result<()> {
         paths.microphone_audio,
         paths.system_audio,
     ];
+    // The sessions directory pointer lives next to the session, not inside it.
+    if let Some(pointer) = session
+        .parent()
+        .map(|parent| parent.join(CURRENT_SESSION_FILE))
+    {
+        protected.push(pointer);
+    }
     if protected.contains(&output) {
         return Err(Error::InvalidExport(format!(
             "output cannot overwrite a canonical session artifact: {}",

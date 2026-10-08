@@ -11,9 +11,11 @@ use personal_transcriber::domain::{
     ControlAction, InferenceConfig, SegmenterConfig, SessionConfig, SessionEvent, SessionMetadata,
     SessionState, SessionStatus, SpeechSegment, TimestampUs,
 };
-use personal_transcriber::schema::{EVENTS_FILE, MIXED_AUDIO_FILE, SCHEMA_VERSION};
+use personal_transcriber::schema::{
+    CURRENT_SESSION_FILE, EVENTS_FILE, MIXED_AUDIO_FILE, SCHEMA_VERSION,
+};
 use personal_transcriber::session::{self, NullSegmentSink, SegmentSink, StartOptions};
-use personal_transcriber::storage::{SessionStorage, read_json};
+use personal_transcriber::storage::{CurrentSession, SessionStorage, atomic_write_json, read_json};
 
 const FIXTURE: &str = "tests/fixtures/m1_stream.wav";
 
@@ -345,6 +347,34 @@ fn stale_starting_session_without_status_is_recovered() {
     assert_eq!(recovered.state, SessionState::Failed);
     assert_eq!(recovered_metadata.state, SessionState::Failed);
     assert!(recovered_metadata.ended_at_unix_ms.is_some());
+}
+
+#[test]
+fn pointer_to_session_without_metadata_is_discarded_on_start() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let sessions_dir = temporary.path().join("sessions");
+    let orphan_root = sessions_dir.join("orphan-without-metadata");
+    fs::create_dir_all(&orphan_root).expect("orphan directory should be created");
+    atomic_write_json(
+        &sessions_dir.join(CURRENT_SESSION_FILE),
+        &CurrentSession {
+            session_id: uuid::Uuid::new_v4(),
+            root: orphan_root.clone(),
+        },
+    )
+    .expect("stale pointer should be written");
+
+    assert!(matches!(
+        control::current_status(&sessions_dir),
+        Err(personal_transcriber::Error::IncompleteSession(_))
+    ));
+
+    let new_root = run_without_asr(options(sessions_dir.clone())).expect("start should recover");
+
+    assert_ne!(new_root, orphan_root);
+    let current: CurrentSession =
+        read_json(&sessions_dir.join(CURRENT_SESSION_FILE)).expect("pointer should be readable");
+    assert_eq!(current.root, new_root);
 }
 
 #[test]

@@ -8,6 +8,7 @@ pub mod error;
 pub mod export;
 pub mod live_audio;
 pub mod logging;
+pub mod model;
 pub mod schema;
 pub mod segment;
 pub mod session;

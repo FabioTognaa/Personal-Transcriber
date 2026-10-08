@@ -9,7 +9,7 @@ use crossbeam_channel::{RecvTimeoutError, SendTimeoutError, TrySendError, bounde
 use uuid::Uuid;
 
 use crate::asr::{TranscribingSink, WhisperEngine, model_identity, validate_inference_config};
-use crate::audio::FileAudioSource;
+use crate::audio::{FileAudioSource, StreamingAudioSource};
 use crate::domain::{
     AsrMetrics, ControlAction, ControlRequest, InferenceConfig, ModelIdentity, PcmChunk,
     SegmentationMetrics, SegmenterConfig, SessionConfig, SessionEvent, SessionMetadata,
@@ -499,9 +499,14 @@ fn run_with_sink_internal(
         drop(receiver);
 
         if !segmentation_worker_ended_early {
-            segmentation_sender
-                .send(SegmentationCommand::Flush)
-                .map_err(|_| Error::SegmentationWorkerPanicked)?;
+            // When replay is required, `ShutdownDiscard` flushes and drops the
+            // partial result: replay re-segments the same audio, so emitting the
+            // live partial here would transcribe an overlapping range twice.
+            if !segmentation_replay_required {
+                segmentation_sender
+                    .send(SegmentationCommand::Flush)
+                    .map_err(|_| Error::SegmentationWorkerPanicked)?;
+            }
             segmentation_sender
                 .send(if segmentation_replay_required {
                     SegmentationCommand::ShutdownDiscard
@@ -760,12 +765,12 @@ fn replay_segmentation(
     config: SegmenterConfig,
     sink: &mut impl SegmentSink,
 ) -> Result<SegmentationMetrics> {
-    let source = FileAudioSource::open(audio_path)?;
+    let mut source = StreamingAudioSource::open(audio_path)?;
     let mut segmenter = Segmenter::new(config)?;
     let mut range_index = 0;
     let mut was_eligible = false;
 
-    for chunk in source.chunks() {
+    while let Some(chunk) = source.next_chunk()? {
         let chunk_end = TimestampUs(chunk.start.0.saturating_add(chunk.duration_us()));
         while range_index < eligible_ranges.len() && eligible_ranges[range_index].1 <= chunk.start {
             range_index += 1;
@@ -843,7 +848,11 @@ fn apply_control_if_present(
     if !storage.paths.control.exists() {
         return Ok(());
     }
-    let request: ControlRequest = read_json(&storage.paths.control)?;
+    let request: ControlRequest = match read_json(&storage.paths.control) {
+        Ok(request) => request,
+        Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
     if request.generation <= status.applied_control_generation {
         return Ok(());
     }
@@ -876,7 +885,25 @@ fn apply_control_if_present(
 
     status.applied_control_generation = request.generation;
     storage.write_metadata(metadata)?;
-    storage.write_status(status)
+    storage.write_status(status)?;
+    // Drop the consumed request so the poll loop stops re-reading it every few
+    // milliseconds. Only remove the file if it still holds this generation, so a
+    // newer concurrent request is never lost.
+    if read_json::<ControlRequest>(&storage.paths.control)
+        .is_ok_and(|current| current.generation == request.generation)
+    {
+        let _ = fs::remove_file(&storage.paths.control);
+    }
+    Ok(())
+}
+
+fn discard_incomplete_pointer(current_path: &Path, root: &Path) -> Result<()> {
+    tracing::warn!(
+        session = %root.display(),
+        "discarding pointer to an incomplete session without metadata"
+    );
+    fs::remove_file(current_path)?;
+    Ok(())
 }
 
 fn recover_stale_session(sessions_dir: &Path) -> Result<()> {
@@ -896,11 +923,20 @@ fn recover_stale_session(sessions_dir: &Path) -> Result<()> {
                 .ok_or_else(|| Error::InvalidSessionPath(current.root.clone()))?,
         )
     };
-    let root =
-        fs::canonicalize(&candidate).map_err(|_| Error::InvalidSessionPath(candidate.clone()))?;
+    let root = match fs::canonicalize(&candidate) {
+        Ok(root) => root,
+        Err(_) => {
+            discard_incomplete_pointer(&current_path, &candidate)?;
+            return Ok(());
+        }
+    };
     let paths = crate::schema::SessionPaths::new(root);
     if !paths.is_within(&sessions_dir) || paths.root == sessions_dir {
         return Err(Error::InvalidSessionPath(paths.root));
+    }
+    if !paths.metadata.is_file() {
+        discard_incomplete_pointer(&current_path, &paths.root)?;
+        return Ok(());
     }
     let mut metadata: SessionMetadata = read_json(&paths.metadata)?;
     if metadata.session_id != current.session_id {

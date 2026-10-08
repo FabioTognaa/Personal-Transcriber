@@ -42,7 +42,60 @@ curl -fL \
 Il file atteso occupa 190.085.487 byte e ha SHA-256
 `ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb`.
 Il percorso `models/ggml-small-q5_1.bin` è usato automaticamente da `doctor` e
-`start`; `--model` permette di sceglierne un altro.
+`start`.
+
+### Scelta del modello
+
+`--model-preset` seleziona un modello documentato senza scrivere percorsi. Il
+valore predefinito è `small`; `large-v3-turbo` è il compromesso consigliato tra
+accuratezza e velocità, `large-v3` la qualità massima. Un file GGML qualsiasi si
+seleziona con `--model <percorso>`, che ha la precedenza sul preset.
+
+Se avvii `start` da un terminale **senza** `--model` né `--model-preset`, compare
+un menu che elenca i preset con lo stato `[scaricato]`/`[mancante]` e gli altri
+file `.bin` presenti in `models/`:
+
+```text
+Seleziona il modello per la trascrizione:
+  1) small            [scaricato] models/ggml-small-q5_1.bin
+  2) medium           [mancante]  models/ggml-medium-q5_0.bin
+  3) large-v3-turbo   [scaricato] models/ggml-large-v3-turbo-q8_0.bin
+  4) large-v3         [mancante]  models/ggml-large-v3-q5_0.bin
+Invio = default (small), numero = scegli, p = percorso personalizzato:
+```
+
+Invio accetta il default `small`, un numero sceglie la voce, `p` permette di
+digitare un percorso. In script, CI o test (nessun terminale) il menu non compare
+e vale il default `small`; passando `--model` o `--model-preset` il menu è saltato.
+
+| Preset | File | Dimensione | Uso consigliato |
+| --- | --- | ---: | --- |
+| `small` | `ggml-small-q5_1.bin` | ~190 MB | predefinito, molto veloce |
+| `medium` | `ggml-medium-q5_0.bin` | ~540 MB | via di mezzo |
+| `large-v3-turbo` | `ggml-large-v3-turbo-q8_0.bin` | ~874 MB | migliore qualità/velocità |
+| `large-v3` | `ggml-large-v3-q5_0.bin` | ~1,1 GB | qualità massima, più lento |
+
+Per usare `large-v3-turbo`:
+
+```sh
+curl -fL \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q8_0.bin \
+  -o models/ggml-large-v3-turbo-q8_0.bin
+cargo run --release -- start --model-preset large-v3-turbo --language it
+```
+
+Su Apple Silicon con almeno 16 GiB, `large-v3-turbo` e `large-v3` restano sotto
+il real-time factor 1 con margine ampio; le versioni F16 (`ggml-large-v3-turbo.bin`,
+`ggml-large-v3.bin`) sono selezionabili con `--model` per la massima accuratezza.
+
+### Prompt iniziale
+
+Whisper accetta un prompt iniziale che orienta punteggiatura, maiuscole e
+vocabolario senza alcuna post-elaborazione del testo. `start` usa
+automaticamente un prompt predefinito per `--language` (`it` o `en`).
+`--asr-prompt "testo"` lo sostituisce, ad esempio per aggiungere un glossario di
+nomi, sigle e termini ricorrenti; `--asr-prompt ""` lo disattiva. Il prompt
+effettivo è salvato in `session.json` e in ogni riga di `transcript.jsonl`.
 
 ## Cattura live
 

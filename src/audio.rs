@@ -97,11 +97,69 @@ impl FileAudioSource {
     }
 }
 
-fn downmix(interleaved: &[f32], channels: usize) -> Vec<f32> {
+/// Streams a canonical 16-bit mono 16 kHz WAV as 20 ms chunks without loading
+/// it into memory. Unlike [`FileAudioSource`] it has no size or duration cap,
+/// so it can replay audio from sessions longer than the WAV simulator allows.
+pub struct StreamingAudioSource {
+    reader: hound::WavReader<std::io::BufReader<std::fs::File>>,
+    chunk_frames: usize,
+    index: usize,
+}
+
+impl StreamingAudioSource {
+    pub fn open(path: &Path) -> Result<Self> {
+        let reader = hound::WavReader::open(path)?;
+        let spec = reader.spec();
+        if spec.channels != TARGET_CHANNELS
+            || spec.sample_rate != TARGET_SAMPLE_RATE_HZ
+            || spec.sample_format != hound::SampleFormat::Int
+            || spec.bits_per_sample != 16
+        {
+            return Err(Error::UnsupportedWav(
+                "session audio must be 16-bit mono PCM at 16 kHz".to_owned(),
+            ));
+        }
+        let chunk_frames =
+            (u64::from(TARGET_SAMPLE_RATE_HZ) * DEFAULT_CHUNK_DURATION_MS / 1_000) as usize;
+        Ok(Self {
+            reader,
+            chunk_frames,
+            index: 0,
+        })
+    }
+
+    pub fn next_chunk(&mut self) -> Result<Option<PcmChunk>> {
+        let mut samples = Vec::with_capacity(self.chunk_frames);
+        for sample in self.reader.samples::<i16>().take(self.chunk_frames) {
+            samples.push(f32::from(sample?) / 32_768.0);
+        }
+        if samples.is_empty() {
+            return Ok(None);
+        }
+        let start = TimestampUs(
+            (self.index * self.chunk_frames) as u64 * 1_000_000 / u64::from(TARGET_SAMPLE_RATE_HZ),
+        );
+        self.index += 1;
+        Ok(Some(PcmChunk {
+            source: AudioSourceKind::File,
+            start,
+            sample_rate_hz: TARGET_SAMPLE_RATE_HZ,
+            channels: TARGET_CHANNELS,
+            samples,
+        }))
+    }
+}
+
+pub(crate) fn downmix(interleaved: &[f32], channels: usize) -> Vec<f32> {
     interleaved
         .chunks_exact(channels)
         .map(|frame| frame.iter().sum::<f32>() / channels as f32)
         .collect()
+}
+
+/// Linear interpolation between two samples, shared by every resampler.
+pub(crate) fn lerp(lower: f32, upper: f32, fraction: f32) -> f32 {
+    lower + (upper - lower) * fraction
 }
 
 fn resample_linear(input: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32> {
@@ -122,7 +180,7 @@ fn resample_linear(input: &[f32], source_rate: u32, target_rate: u32) -> Vec<f32
             let lower = source_position.floor() as usize;
             let upper = (lower + 1).min(input.len() - 1);
             let fraction = (source_position - lower as f64) as f32;
-            input[lower] + (input[upper] - input[lower]) * fraction
+            lerp(input[lower], input[upper], fraction)
         })
         .collect()
 }
@@ -157,5 +215,47 @@ mod tests {
             FileAudioSource::open(temporary.path()),
             Err(Error::UnsupportedWav(_))
         ));
+    }
+
+    #[test]
+    fn streaming_source_reads_files_the_simulator_rejects() {
+        let temporary = tempfile::tempdir().expect("temporary directory should be created");
+        let path = temporary.path().join("long.wav");
+        write_sparse_wav(&path, MAX_FILE_SOURCE_BYTES / 2 + 1);
+
+        assert!(FileAudioSource::open(&path).is_err());
+
+        let mut source = StreamingAudioSource::open(&path).expect("streaming should open");
+        for _ in 0..5 {
+            let chunk = source
+                .next_chunk()
+                .expect("chunk should read")
+                .expect("chunk should exist");
+            assert_eq!(chunk.samples.len(), 320);
+        }
+    }
+
+    fn write_sparse_wav(path: &Path, frames: u64) {
+        use std::io::Write;
+
+        let data_len = frames * 2;
+        let mut header = Vec::with_capacity(44);
+        header.extend_from_slice(b"RIFF");
+        header.extend_from_slice(&(36 + data_len as u32).to_le_bytes());
+        header.extend_from_slice(b"WAVEfmt ");
+        header.extend_from_slice(&16u32.to_le_bytes());
+        header.extend_from_slice(&1u16.to_le_bytes());
+        header.extend_from_slice(&1u16.to_le_bytes());
+        header.extend_from_slice(&16_000u32.to_le_bytes());
+        header.extend_from_slice(&32_000u32.to_le_bytes());
+        header.extend_from_slice(&2u16.to_le_bytes());
+        header.extend_from_slice(&16u16.to_le_bytes());
+        header.extend_from_slice(b"data");
+        header.extend_from_slice(&(data_len as u32).to_le_bytes());
+
+        let mut file = std::fs::File::create(path).expect("sparse WAV should be created");
+        file.write_all(&header).expect("header should be written");
+        file.set_len(44 + data_len)
+            .expect("file should be extended");
     }
 }

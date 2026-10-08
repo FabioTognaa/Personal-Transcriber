@@ -7,7 +7,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded};
 
-use crate::audio::DEFAULT_CHUNK_DURATION_MS;
+use crate::audio::{DEFAULT_CHUNK_DURATION_MS, downmix, lerp};
 use crate::domain::{
     AudioSourceKind, CaptureMetrics, PcmChunk, TARGET_CHANNELS, TARGET_SAMPLE_RATE_HZ, TimestampUs,
 };
@@ -90,9 +90,7 @@ impl LiveAudioConfig {
                     .map_err(audio_error)?
                     .filter_map(|device| {
                         let name = device.name().ok()?;
-                        name.to_ascii_lowercase()
-                            .contains("blackhole")
-                            .then_some((name, device))
+                        crate::diagnostics::is_blackhole(&name).then_some((name, device))
                     })
                     .collect::<Vec<_>>();
                 match matches.len() {
@@ -377,10 +375,7 @@ impl Normalizer {
             return Vec::new();
         }
         let channels = usize::from(channels);
-        let mono = interleaved
-            .chunks_exact(channels)
-            .map(|frame| frame.iter().sum::<f32>() / channels as f32)
-            .collect::<Vec<_>>();
+        let mono = downmix(interleaved, channels);
         if mono.is_empty() {
             return Vec::new();
         }
@@ -397,7 +392,7 @@ impl Normalizer {
         while self.phase + 1.0 < input.len() as f64 {
             let lower = self.phase.floor() as usize;
             let fraction = (self.phase - lower as f64) as f32;
-            output.push(input[lower] + (input[lower + 1] - input[lower]) * fraction);
+            output.push(lerp(input[lower], input[lower + 1], fraction));
             self.phase += step;
         }
         self.phase -= (input.len() - 1) as f64;
