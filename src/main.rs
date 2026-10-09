@@ -5,7 +5,7 @@ fn main() {
     let cli = Cli::parse();
     personal_transcriber::logging::init(cli.verbose);
 
-    if let Err(error) = cli::execute(cli.command, cli.sessions_dir) {
+    if let Err(error) = cli::execute(cli.command) {
         eprintln!("error: {error}");
         std::process::exit(1);
     }

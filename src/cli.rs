@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use crate::domain::{
-    ControlAction, InferenceConfig, InferenceStrategy, SegmenterConfig, default_threads,
-};
+use crate::domain::{ControlAction, InferenceConfig, SegmenterConfig};
 use crate::model::ModelPreset;
 use crate::session::StartOptions;
 use crate::{Error, Result};
+
+/// Fixed duration of the `doctor --probe-audio` check.
+const DOCTOR_PROBE_DURATION: std::time::Duration = std::time::Duration::from_secs(3);
 
 #[derive(Debug, Parser)]
 #[command(
@@ -21,12 +22,18 @@ pub struct Cli {
     #[arg(short, long, action = clap::ArgAction::Count, global = true)]
     pub verbose: u8,
 
-    /// Directory under which session directories are created.
-    #[arg(long, default_value = "sessions", global = true)]
-    pub sessions_dir: PathBuf,
-
     #[command(subcommand)]
     pub command: Command,
+}
+
+/// Directory holding session directories. Only the commands that create or
+/// address a session expose it, so `devices` and `transcribe` do not advertise a
+/// flag they would ignore.
+#[derive(Debug, Args)]
+pub struct SessionsDirArgs {
+    /// Directory under which session directories are created.
+    #[arg(long, default_value = "sessions")]
+    pub sessions_dir: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -40,13 +47,13 @@ pub enum Command {
     /// Transcribe an existing audio file to `<stem>.txt` and `<stem>.md`.
     Transcribe(TranscribeArgs),
     /// Show the current session state and backlog.
-    Status,
+    Status(SessionsDirArgs),
     /// Pause transcription while audio recording continues.
-    Pause,
+    Pause(SessionsDirArgs),
     /// Resume transcription for the active session.
-    Resume,
+    Resume(SessionsDirArgs),
     /// Finalize the active session.
-    Stop,
+    Stop(SessionsDirArgs),
     /// Export a completed canonical transcript.
     Export(ExportArgs),
 }
@@ -73,9 +80,8 @@ pub struct DoctorArgs {
     #[arg(long, requires = "probe_audio")]
     pub system_audio: Option<String>,
 
-    /// Duration of the explicit audio probe.
-    #[arg(long, default_value_t = 3, requires = "probe_audio")]
-    pub probe_seconds: u64,
+    #[command(flatten)]
+    pub sessions: SessionsDirArgs,
 }
 
 #[derive(Debug, Args)]
@@ -100,6 +106,9 @@ pub struct StartArgs {
 
     #[command(flatten)]
     pub inference: InferenceArgs,
+
+    #[command(flatten)]
+    pub sessions: SessionsDirArgs,
 }
 
 #[derive(Debug, Args)]
@@ -141,6 +150,10 @@ pub struct ModelArgs {
 }
 
 /// Voice-activity segmentation, shared by `start` and `transcribe`.
+///
+/// Only the parameters that realistically depend on the recording environment
+/// are exposed; pre/post roll, minimum speech and maximum segment length keep
+/// their defaults and are still recorded in `session.json`.
 #[derive(Debug, Args)]
 pub struct VadArgs {
     /// RMS threshold above which a PCM chunk is treated as voice.
@@ -154,69 +167,18 @@ pub struct VadArgs {
     /// Consecutive silence required to end a segment.
     #[arg(long, default_value_t = 800)]
     pub vad_end_ms: u64,
-
-    /// Audio retained before detected speech.
-    #[arg(long, default_value_t = 200)]
-    pub vad_pre_roll_ms: u64,
-
-    /// Audio retained after the last detected speech.
-    #[arg(long, default_value_t = 200)]
-    pub vad_post_roll_ms: u64,
-
-    /// Minimum voiced duration accepted as a segment.
-    #[arg(long, default_value_t = 100)]
-    pub vad_min_speech_ms: u64,
-
-    /// Maximum segment duration before a deterministic split.
-    #[arg(long, default_value_t = 30_000)]
-    pub vad_max_segment_ms: u64,
 }
 
 /// whisper.cpp decoding options, shared by `start` and `transcribe`.
+///
+/// Thread count, decoding strategy, beam width, temperature and Core ML keep
+/// their defaults; flash attention stays a flag because it is the escape hatch
+/// for Metal-specific issues.
 #[derive(Debug, Args)]
 pub struct InferenceArgs {
-    /// CPU threads used by whisper.cpp.
-    #[arg(long, default_value_t = default_threads())]
-    pub asr_threads: i32,
-
-    /// Whisper decoding strategy.
-    #[arg(long, value_enum, default_value_t = DecoderStrategy::BeamSearch)]
-    pub asr_strategy: DecoderStrategy,
-
-    /// Candidate count for greedy decoding.
-    #[arg(long, default_value_t = 5)]
-    pub asr_best_of: i32,
-
-    /// Beam width for beam-search decoding.
-    #[arg(long, default_value_t = 5)]
-    pub asr_beam_size: i32,
-
-    /// Initial decoding temperature.
-    #[arg(long, default_value_t = 0.0)]
-    pub asr_temperature: f32,
-
     /// Enable whisper.cpp flash attention.
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub asr_flash_attention: bool,
-
-    /// Require a binary built with the optional Core ML feature.
-    #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
-    pub asr_coreml: bool,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum DecoderStrategy {
-    Greedy,
-    BeamSearch,
-}
-
-impl From<DecoderStrategy> for InferenceStrategy {
-    fn from(strategy: DecoderStrategy) -> Self {
-        match strategy {
-            DecoderStrategy::Greedy => Self::Greedy,
-            DecoderStrategy::BeamSearch => Self::BeamSearch,
-        }
-    }
 }
 
 #[derive(Debug, Args)]
@@ -246,7 +208,7 @@ pub enum ExportFormat {
     Vtt,
 }
 
-pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
+pub fn execute(command: Command) -> Result<()> {
     match command {
         Command::Devices => {
             print_json(&crate::diagnostics::audio_devices()?)?;
@@ -260,14 +222,14 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
             });
             let report = if args.probe_audio {
                 crate::diagnostics::doctor_with_audio_probe(
-                    &sessions_dir,
+                    &args.sessions.sessions_dir,
                     &model,
                     args.microphone.as_deref(),
                     args.system_audio.as_deref(),
-                    std::time::Duration::from_secs(args.probe_seconds),
+                    DOCTOR_PROBE_DURATION,
                 )
             } else {
-                crate::diagnostics::doctor(&sessions_dir, &model)
+                crate::diagnostics::doctor(&args.sessions.sessions_dir, &model)
             };
             print_json(&report)?;
             if report.ready {
@@ -283,7 +245,7 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
             let language = args.model.language;
             let prompt = resolve_initial_prompt(args.model.asr_prompt, &language);
             let root = crate::session::run(StartOptions {
-                sessions_dir,
+                sessions_dir: args.sessions.sessions_dir,
                 input_wav: args.input_wav,
                 model: Some(model),
                 language,
@@ -311,27 +273,27 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
             })?;
             Ok(())
         }
-        Command::Status => {
-            print_json(&crate::control::status_report(&sessions_dir)?)?;
+        Command::Status(args) => {
+            print_json(&crate::control::status_report(&args.sessions_dir)?)?;
             Ok(())
         }
-        Command::Pause => {
+        Command::Pause(args) => {
             print_status(&crate::control::request(
-                &sessions_dir,
+                &args.sessions_dir,
                 ControlAction::Pause,
             )?)?;
             Ok(())
         }
-        Command::Resume => {
+        Command::Resume(args) => {
             print_status(&crate::control::request(
-                &sessions_dir,
+                &args.sessions_dir,
                 ControlAction::Resume,
             )?)?;
             Ok(())
         }
-        Command::Stop => {
+        Command::Stop(args) => {
             print_status(&crate::control::request(
-                &sessions_dir,
+                &args.sessions_dir,
                 ControlAction::Stop,
             )?)?;
             Ok(())
@@ -379,23 +341,15 @@ fn segmenter_config(vad: &VadArgs) -> SegmenterConfig {
         energy_threshold: vad.vad_threshold,
         start_trigger_ms: vad.vad_start_ms,
         end_silence_ms: vad.vad_end_ms,
-        pre_roll_ms: vad.vad_pre_roll_ms,
-        post_roll_ms: vad.vad_post_roll_ms,
-        min_speech_ms: vad.vad_min_speech_ms,
-        max_segment_ms: vad.vad_max_segment_ms,
+        ..SegmenterConfig::default()
     }
 }
 
 fn inference_config(inference: &InferenceArgs, prompt: Option<String>) -> InferenceConfig {
     InferenceConfig {
-        threads: inference.asr_threads,
-        strategy: inference.asr_strategy.into(),
-        best_of: inference.asr_best_of,
-        beam_size: inference.asr_beam_size,
-        temperature: inference.asr_temperature,
         flash_attention: inference.asr_flash_attention,
-        coreml: inference.asr_coreml,
         prompt,
+        ..InferenceConfig::default()
     }
 }
 
@@ -560,7 +514,7 @@ mod tests {
             Some(PathBuf::from("tests/fixtures/m1_stream.wav"))
         );
         assert_eq!(args.model.model, Some(PathBuf::from("models/fixture.bin")));
-        assert_eq!(cli.sessions_dir, PathBuf::from("sessions"));
+        assert_eq!(args.sessions.sessions_dir, PathBuf::from("sessions"));
     }
 
     #[test]

@@ -67,7 +67,9 @@ o parafrasa.
 
 ## I comandi
 
-Tutti accettano `--sessions-dir` (default `sessions`) e `-v` ripetibile.
+`--sessions-dir` (default `sessions`) è disponibile sui comandi che creano o
+indirizzano una sessione (`start`, `doctor`, `status`, `pause`, `resume`, `stop`).
+Tutti accettano `-v` ripetibile.
 
 | Comando | Cosa fa | Cosa non fa |
 | --- | --- | --- |
@@ -75,6 +77,7 @@ Tutti accettano `--sessions-dir` (default `sessions`) e `-v` ripetibile.
 | `doctor` | Controlla piattaforma, directory, spazio disco, modello, input e BlackHole. | Senza `--probe-audio` non ascolta. Non cambia le impostazioni di macOS. |
 | `doctor --probe-audio` | Apre microfono e BlackHole per qualche secondo (default 3) e verifica che arrivi segnale. | Non crea una sessione. |
 | `start` | Resta in primo piano fino alla fine. Crea una sessione nuova e stampa il percorso. | Non sovrascrive una sessione già esistente. |
+| `transcribe` | Trascrive un file esistente (WAV, MP3, M4A/MP4, AAC) in `<nome>.txt` e `<nome>.md` accanto all'input, senza creare una sessione. | Non salva audio né eventi, non riproduce a velocità reale e non sovrascrive output esistenti. |
 | `status`, `pause`, `resume`, `stop` | Si lanciano da un secondo terminale. Parlano con `start` tramite file, non tramite rete. | `pause` non ferma la registrazione. |
 | `export` | Legge `transcript.jsonl` e produce JSONL, testo, Markdown, SRT o VTT. | Non modifica il testo. Rifiuta di scrivere sopra i file canonici della sessione. |
 
@@ -230,8 +233,10 @@ persi.
 ## Come nasce un segmento
 
 Il VAD non è un modello neurale. Per ogni chunk calcola l'RMS, cioè la radice della
-media dei quadrati dei campioni. Se l'RMS è almeno 0,02, il chunk è voce. I default,
-tutti modificabili con le opzioni `--vad-*` e poi salvati in `session.json`, sono:
+media dei quadrati dei campioni. Se l'RMS è almeno 0,02, il chunk è voce. I default
+sono elencati sotto e vengono tutti salvati in `session.json`. Da CLI si regolano
+solo voce, innesco e fine (`--vad-threshold`, `--vad-start-ms`, `--vad-end-ms`);
+pre-roll, post-roll, minimo e massimo restano fissi:
 
 | Soglia | Default | Effetto |
 | --- | --- | --- |

@@ -16,6 +16,19 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
   Rust, nessun ffmpeg richiesto), normalizzata a mono 16 kHz con memoria costante.
   La trascrizione di un file procede più velocemente del tempo reale.
 
+### Changed
+
+- Ridotte le opzioni di tuning: `start` e `transcribe` espongono solo soglia,
+  innesco e fine del VAD (`--vad-threshold`, `--vad-start-ms`, `--vad-end-ms`) e
+  `--asr-flash-attention`; thread, strategia, beam, temperatura e Core ML usano i
+  default. Rimossi i flag mai usati `--asr-threads`, `--asr-strategy`,
+  `--asr-best-of`, `--asr-beam-size`, `--asr-temperature`, `--asr-coreml`,
+  `--vad-pre-roll-ms`, `--vad-post-roll-ms`, `--vad-min-speech-ms`,
+  `--vad-max-segment-ms` e `--probe-seconds`; i valori restano registrati in
+  `session.json`.
+- `--sessions-dir` non è più globale: compare solo sui comandi che creano o
+  indirizzano una sessione.
+
 ## [0.2.0]
 
 ### Added

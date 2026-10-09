@@ -1,22 +1,42 @@
 # personal-transcriber
 
-CLI locale per registrare e trascrivere riunioni in corso. La prima versione è
-destinata a macOS Apple Silicon, usa BlackHole per leggere l'audio della call e
-conserva audio e trascrizioni esclusivamente sul computer dell'utente.
+Welcome to my personal transcriber!
 
-Il progetto è in sviluppo iniziale. Può acquisire microfono e BlackHole su stream
-separati oppure simulare una sessione da WAV, segmentare localmente il parlato e
-trascriverlo in italiano o inglese con whisper.cpp e accelerazione Metal. La
-cattura live richiede ancora la verifica end-to-end su una call reale prima di
-considerare completata la milestone.
+I decided to write this program in order to build a personal tool which was useful, functional and istructive at the same time.
 
-## Principi
+### Disclaimer:
 
-- Nessuna API cloud, telemetria o upload di audio.
-- Trascrizione ASR non rielaborata da LLM, correttori o riassuntori.
-- Registrazione audio progressiva e transcript con timestamp.
-- CLI prima di qualsiasi interfaccia grafica.
-- Core Rust portabile; adattatore di cattura macOS nella prima versione.
+The entire codebase it's been writing using an agentic AI: expecially by Sol 5.6 and Grok 4.7 for documentation.
+L'obiettivo principale era quello di esercitarmi nell'usare AI agentiche per scrivere prodotti software in modo efficace.
+
+Si tratta di un programma utilizzabile da terminale, che si collega all'audio del microfono e quello del dispositivo audio del pc tramite un proxy ( es. BlackHole per MacOS), producendo un elaborato testuale di quello che è stato registrato.  
+L'intera pipeline di lavoro si svolge in locale, così come la conservazione di ogni elaborato, salvaguardando privacy e sicurezza.
+
+# Installazione
+
+Attualmente il programa e' in fase di pre-release ed è destinata a macOS Apple Silicon, in arrivo versioni compatibili anche per altri sistemi operativi...
+
+### [Installazione per MacOS Apple Silicon](docs/INSTALLATION_MACOS.md)
+
+### [Installazione per Windows](docs/INSTALLATION_WINDOWS.md)
+
+### [Installazione per Linux]docs/INSTALLATION_LINUX.md)
+
+# Funzionalità Principali
+
+## Live Recording
+
+Funzione principale del programma, nella quale l'utente può registrare l'audio dal proprio microfono e dall'audio del sistema contemporaneamente.
+
+-------stcrivere come si usa il prodotto introducendo i comandi ed i loro flag via via
+
+## Transcrizione di file
+
+Possono essere trascritti anche file audio-video già esistenti nella propria macchina; in questo caso la trascrizione non avviene in streaming ed è quindi più veloce e meno esosa di risorse.
+I formati di file supportati sono: mp3, m4a, mp4, aac.
+Per quanto riguarda i formati wav, ad oggi non c'è ancora una funzione nativa che consenta una trascrizione che non simuli quella in velocità di streaming (verrà corretta con le successive implementazioni)
+
+------fare come live recording
 
 ## Installazione
 
@@ -30,7 +50,9 @@ cd personal-transcriber
 cargo build --release
 ```
 
-Scaricare il modello quantizzato predefinito:
+ATTENZIONE: i modelli quantizzati sono molteplici e non sono inclusi nel repo di default. È possibile scaricarli tramite i comandi elencati qui sotto.
+
+Dalla root del progetto
 
 ```sh
 mkdir -p models
@@ -38,11 +60,6 @@ curl -fL \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin \
   -o models/ggml-small-q5_1.bin
 ```
-
-Il file atteso occupa 190.085.487 byte e ha SHA-256
-`ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb`.
-Il percorso `models/ggml-small-q5_1.bin` è usato automaticamente da `doctor` e
-`start`.
 
 ### Scelta del modello
 
@@ -68,12 +85,12 @@ Invio accetta il default `small`, un numero sceglie la voce, `p` permette di
 digitare un percorso. In script, CI o test (nessun terminale) il menu non compare
 e vale il default `small`; passando `--model` o `--model-preset` il menu è saltato.
 
-| Preset | File | Dimensione | Uso consigliato |
-| --- | --- | ---: | --- |
-| `small` | `ggml-small-q5_1.bin` | ~190 MB | predefinito, molto veloce |
-| `medium` | `ggml-medium-q5_0.bin` | ~540 MB | via di mezzo |
-| `large-v3-turbo` | `ggml-large-v3-turbo-q8_0.bin` | ~874 MB | migliore qualità/velocità |
-| `large-v3` | `ggml-large-v3-q5_0.bin` | ~1,1 GB | qualità massima, più lento |
+| Preset           | File                           | Dimensione | Uso consigliato            |
+| ---------------- | ------------------------------ | ---------: | -------------------------- |
+| `small`          | `ggml-small-q5_1.bin`          |    ~190 MB | predefinito, molto veloce  |
+| `medium`         | `ggml-medium-q5_0.bin`         |    ~540 MB | via di mezzo               |
+| `large-v3-turbo` | `ggml-large-v3-turbo-q8_0.bin` |    ~874 MB | migliore qualità/velocità  |
+| `large-v3`       | `ggml-large-v3-q5_0.bin`       |    ~1,1 GB | qualità massima, più lento |
 
 Per usare `large-v3-turbo`:
 
@@ -168,8 +185,9 @@ essere scritto. Il segmento pendente viene chiuso quando inizia la pausa e
 l'elaborazione riparte senza attraversare l'intervallo sospeso.
 
 Il VAD usa chunk mono 16 kHz, soglia RMS, isteresi di avvio, preroll/postroll,
-silenzio finale e durata massima. Le soglie sono configurabili tramite le opzioni
-`--vad-*` mostrate da `start --help`; i valori effettivi sono salvati in
+silenzio finale e durata massima. Da CLI si regolano solo soglia, innesco e fine
+(`--vad-threshold`, `--vad-start-ms`, `--vad-end-ms`); preroll/postroll, durata
+minima e massima restano fisse. Tutti i valori effettivi sono salvati in
 `session.json`. Coda e metriche di segmentazione sono visibili in `status.json`.
 
 Il worker ASR usa una coda bounded separata e scrive ogni segmento finale,
@@ -197,9 +215,10 @@ L'output sono due file accanto all'input:
 - `riunione.md`: intestazione con il nome del file e righe con timestamp.
 
 Se `riunione.txt` o `riunione.md` esistono già, il comando si ferma senza
-sovrascriverli. Le opzioni del modello e della segmentazione (`--model`,
-`--model-preset`, `--language`, `--asr-prompt`, `--vad-*`, `--asr-*`) sono le
-stesse di `start`.
+sovrascriverli. Le opzioni di modello, lingua e segmentazione (`--model`,
+`--model-preset`, `--language`, `--asr-prompt`, `--vad-threshold`,
+`--vad-start-ms`, `--vad-end-ms`, `--asr-flash-attention`) sono le stesse di
+`start`.
 
 ## Diagnostica ed export
 
