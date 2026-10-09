@@ -5,6 +5,17 @@ Tutte le modifiche rilevanti per gli utenti saranno documentate in questo file.
 Il formato segue [Keep a Changelog](https://keepachangelog.com/it/1.1.0/) e il
 progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
+## [Unreleased]
+
+### Added
+
+- Comando `transcribe <file>` per trascrivere un file esistente senza creare una
+  sessione: produce `<nome>.txt` e `<nome>.md` accanto all'input, rifiuta di
+  sovrascrivere file esistenti e non conserva audio né eventi.
+- Decodifica in streaming di MP3, M4A/MP4 (AAC) e AAC tramite `symphonia` (puro
+  Rust, nessun ffmpeg richiesto), normalizzata a mono 16 kHz con memoria costante.
+  La trascrizione di un file procede più velocemente del tempo reale.
+
 ## [0.2.0]
 
 ### Added

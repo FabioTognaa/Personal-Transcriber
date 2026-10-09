@@ -37,6 +37,8 @@ pub enum Command {
     Doctor(DoctorArgs),
     /// Start a local recording and transcription session.
     Start(StartArgs),
+    /// Transcribe an existing audio file to `<stem>.txt` and `<stem>.md`.
+    Transcribe(TranscribeArgs),
     /// Show the current session state and backlog.
     Status,
     /// Pause transcription while audio recording continues.
@@ -82,16 +84,6 @@ pub struct StartArgs {
     #[arg(long)]
     pub input_wav: Option<PathBuf>,
 
-    /// Local whisper.cpp GGML model path. Overrides `--model-preset`.
-    #[arg(long)]
-    pub model: Option<PathBuf>,
-
-    /// Built-in model preset resolved under `models/`; ignored when `--model` is set.
-    /// Without either flag, `start` asks interactively on a terminal, otherwise
-    /// it uses the `small` preset.
-    #[arg(long, value_enum)]
-    pub model_preset: Option<ModelPreset>,
-
     /// Input device used for the local microphone.
     #[arg(long, conflicts_with = "input_wav")]
     pub microphone: Option<String>,
@@ -99,6 +91,44 @@ pub struct StartArgs {
     /// Input device used for remote/system audio, normally BlackHole on macOS.
     #[arg(long, conflicts_with = "input_wav")]
     pub system_audio: Option<String>,
+
+    #[command(flatten)]
+    pub model: ModelArgs,
+
+    #[command(flatten)]
+    pub vad: VadArgs,
+
+    #[command(flatten)]
+    pub inference: InferenceArgs,
+}
+
+#[derive(Debug, Args)]
+pub struct TranscribeArgs {
+    /// Audio file to transcribe (`.wav`, `.mp3`, `.m4a`, `.mp4`, `.aac`).
+    pub input: PathBuf,
+
+    #[command(flatten)]
+    pub model: ModelArgs,
+
+    #[command(flatten)]
+    pub vad: VadArgs,
+
+    #[command(flatten)]
+    pub inference: InferenceArgs,
+}
+
+/// Model selection and language, shared by `start` and `transcribe`.
+#[derive(Debug, Args)]
+pub struct ModelArgs {
+    /// Local whisper.cpp GGML model path. Overrides `--model-preset`.
+    #[arg(long)]
+    pub model: Option<PathBuf>,
+
+    /// Built-in model preset resolved under `models/`; ignored when `--model` is set.
+    /// Without either flag, the model is asked interactively on a terminal, otherwise
+    /// the `small` preset is used.
+    #[arg(long, value_enum)]
+    pub model_preset: Option<ModelPreset>,
 
     /// Spoken language: `it` or `en`.
     #[arg(long, default_value = "it", value_parser = ["it", "en"])]
@@ -108,7 +138,11 @@ pub struct StartArgs {
     /// built-in prompt for `--language`; pass an empty string to disable it.
     #[arg(long)]
     pub asr_prompt: Option<String>,
+}
 
+/// Voice-activity segmentation, shared by `start` and `transcribe`.
+#[derive(Debug, Args)]
+pub struct VadArgs {
     /// RMS threshold above which a PCM chunk is treated as voice.
     #[arg(long, default_value_t = 0.02)]
     pub vad_threshold: f32,
@@ -136,7 +170,11 @@ pub struct StartArgs {
     /// Maximum segment duration before a deterministic split.
     #[arg(long, default_value_t = 30_000)]
     pub vad_max_segment_ms: u64,
+}
 
+/// whisper.cpp decoding options, shared by `start` and `transcribe`.
+#[derive(Debug, Args)]
+pub struct InferenceArgs {
     /// CPU threads used by whisper.cpp.
     #[arg(long, default_value_t = default_threads())]
     pub asr_threads: i32,
@@ -239,39 +277,38 @@ pub fn execute(command: Command, sessions_dir: PathBuf) -> Result<()> {
             }
         }
         Command::Start(args) => {
-            let model = resolve_model_path(args.model, args.model_preset)
+            let model = resolve_model_path(args.model.model, args.model.model_preset)
                 .or_else(select_model_interactively)
                 .unwrap_or_else(|| ModelPreset::Small.default_path());
-            let prompt = resolve_initial_prompt(args.asr_prompt, &args.language);
+            let language = args.model.language;
+            let prompt = resolve_initial_prompt(args.model.asr_prompt, &language);
             let root = crate::session::run(StartOptions {
                 sessions_dir,
                 input_wav: args.input_wav,
                 model: Some(model),
-                language: args.language,
+                language,
                 microphone: args.microphone,
                 system_audio: args.system_audio,
-                segmenter: SegmenterConfig {
-                    energy_threshold: args.vad_threshold,
-                    start_trigger_ms: args.vad_start_ms,
-                    end_silence_ms: args.vad_end_ms,
-                    pre_roll_ms: args.vad_pre_roll_ms,
-                    post_roll_ms: args.vad_post_roll_ms,
-                    min_speech_ms: args.vad_min_speech_ms,
-                    max_segment_ms: args.vad_max_segment_ms,
-                },
-                inference: InferenceConfig {
-                    threads: args.asr_threads,
-                    strategy: args.asr_strategy.into(),
-                    best_of: args.asr_best_of,
-                    beam_size: args.asr_beam_size,
-                    temperature: args.asr_temperature,
-                    flash_attention: args.asr_flash_attention,
-                    coreml: args.asr_coreml,
-                    prompt,
-                },
+                segmenter: segmenter_config(&args.vad),
+                inference: inference_config(&args.inference, prompt),
                 model_identity: None,
             })?;
             println!("{}", root.display());
+            Ok(())
+        }
+        Command::Transcribe(args) => {
+            let model = resolve_model_path(args.model.model, args.model.model_preset)
+                .or_else(select_model_interactively)
+                .unwrap_or_else(|| ModelPreset::Small.default_path());
+            let language = args.model.language;
+            let prompt = resolve_initial_prompt(args.model.asr_prompt, &language);
+            crate::transcribe::run(crate::transcribe::TranscribeOptions {
+                input: args.input,
+                model,
+                language,
+                segmenter: segmenter_config(&args.vad),
+                inference: inference_config(&args.inference, prompt),
+            })?;
             Ok(())
         }
         Command::Status => {
@@ -334,6 +371,31 @@ fn resolve_initial_prompt(override_prompt: Option<String>, language: &str) -> Op
         Some(prompt) if prompt.trim().is_empty() => None,
         Some(prompt) => Some(prompt),
         None => crate::asr::default_initial_prompt(language).map(str::to_owned),
+    }
+}
+
+fn segmenter_config(vad: &VadArgs) -> SegmenterConfig {
+    SegmenterConfig {
+        energy_threshold: vad.vad_threshold,
+        start_trigger_ms: vad.vad_start_ms,
+        end_silence_ms: vad.vad_end_ms,
+        pre_roll_ms: vad.vad_pre_roll_ms,
+        post_roll_ms: vad.vad_post_roll_ms,
+        min_speech_ms: vad.vad_min_speech_ms,
+        max_segment_ms: vad.vad_max_segment_ms,
+    }
+}
+
+fn inference_config(inference: &InferenceArgs, prompt: Option<String>) -> InferenceConfig {
+    InferenceConfig {
+        threads: inference.asr_threads,
+        strategy: inference.asr_strategy.into(),
+        best_of: inference.asr_best_of,
+        beam_size: inference.asr_beam_size,
+        temperature: inference.asr_temperature,
+        flash_attention: inference.asr_flash_attention,
+        coreml: inference.asr_coreml,
+        prompt,
     }
 }
 
@@ -492,12 +554,12 @@ mod tests {
             panic!("expected start command");
         };
 
-        assert_eq!(args.language, "it");
+        assert_eq!(args.model.language, "it");
         assert_eq!(
             args.input_wav,
             Some(PathBuf::from("tests/fixtures/m1_stream.wav"))
         );
-        assert_eq!(args.model, Some(PathBuf::from("models/fixture.bin")));
+        assert_eq!(args.model.model, Some(PathBuf::from("models/fixture.bin")));
         assert_eq!(cli.sessions_dir, PathBuf::from("sessions"));
     }
 
@@ -510,10 +572,10 @@ mod tests {
             panic!("expected start command");
         };
 
-        assert_eq!(args.model, None);
-        assert_eq!(args.model_preset, None);
+        assert_eq!(args.model.model, None);
+        assert_eq!(args.model.model_preset, None);
         assert_eq!(
-            resolve_model_path(args.model, args.model_preset)
+            resolve_model_path(args.model.model, args.model.model_preset)
                 .unwrap_or_else(|| ModelPreset::Small.default_path()),
             PathBuf::from("models/ggml-small-q5_1.bin")
         );
@@ -533,9 +595,9 @@ mod tests {
             panic!("expected start command");
         };
 
-        assert_eq!(args.model_preset, Some(ModelPreset::LargeV3Turbo));
+        assert_eq!(args.model.model_preset, Some(ModelPreset::LargeV3Turbo));
         assert_eq!(
-            args.model_preset.unwrap().default_path(),
+            args.model.model_preset.unwrap().default_path(),
             PathBuf::from("models/ggml-large-v3-turbo-q8_0.bin")
         );
     }
@@ -557,7 +619,7 @@ mod tests {
         };
 
         assert_eq!(
-            resolve_model_path(args.model, args.model_preset),
+            resolve_model_path(args.model.model, args.model.model_preset),
             Some(PathBuf::from("models/custom.bin"))
         );
     }
@@ -630,7 +692,7 @@ mod tests {
             panic!("expected start command");
         };
 
-        assert_eq!(args.language, "en");
+        assert_eq!(args.model.language, "en");
     }
 
     #[test]

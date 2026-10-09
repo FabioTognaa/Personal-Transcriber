@@ -177,6 +177,30 @@ senza correzioni successive, in `transcript.jsonl`. Identità del modello,
 configurazione d'inferenza, backlog e real-time factor sono persistiti nella
 sessione.
 
+## Trascrivere un file
+
+Per trascrivere un file già esistente senza creare una sessione né salvare audio,
+usa `transcribe`. Accetta WAV, MP3, M4A/MP4 e AAC:
+
+```sh
+cargo run --release -- transcribe riunione.mp3 --language it
+```
+
+L'input viene decodificato in streaming e normalizzato a PCM mono 16 kHz; MP3 e
+MP4 sono letti con `symphonia` (puro Rust, nessun ffmpeg richiesto). Poiché non c'è
+cattura in tempo reale, l'elaborazione procede più velocemente del tempo reale.
+I WAV riusano il lettore in memoria, quindi ereditano il limite di 64 MiB / 30
+minuti; MP3 e MP4 non hanno questo limite.
+L'output sono due file accanto all'input:
+
+- `riunione.txt`: testo puro, un segmento per riga;
+- `riunione.md`: intestazione con il nome del file e righe con timestamp.
+
+Se `riunione.txt` o `riunione.md` esistono già, il comando si ferma senza
+sovrascriverli. Le opzioni del modello e della segmentazione (`--model`,
+`--model-preset`, `--language`, `--asr-prompt`, `--vad-*`, `--asr-*`) sono le
+stesse di `start`.
+
 ## Diagnostica ed export
 
 `devices` elenca in JSON i dispositivi CoreAudio visibili, le direzioni supportate
@@ -226,6 +250,8 @@ sono descritti in [`benchmarks/README.md`](benchmarks/README.md).
 - I file delle sessioni non sono cifrati a riposo.
 - Il rilevamento del parlato usa una soglia energetica RMS, non un modello VAD.
 - La cattura live non è ancora stata validata end-to-end su una call reale.
+- `transcribe` elabora un file alla volta e in un solo thread: nel formato
+  leggero non esistono pause, ripresa o stato di avanzamento.
 
 ## Documentazione
 

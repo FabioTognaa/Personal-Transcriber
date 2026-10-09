@@ -71,6 +71,7 @@ metadati della sessione e indica i file prodotti. L'esportazione in formati legg
 personal-transcriber devices
 personal-transcriber doctor
 personal-transcriber start [opzioni]
+personal-transcriber transcribe <file> [opzioni]
 personal-transcriber status
 personal-transcriber pause
 personal-transcriber resume
@@ -88,6 +89,16 @@ di macOS.
 `pause` e `resume` agiscono sulla trascrizione, non sulla registrazione.
 `stop` è idempotente per quanto ragionevole: un secondo `stop` non deve corrompere
 la sessione.
+
+`transcribe` è un percorso distinto e più leggero di `start` per un file già
+esistente: non registra audio, non crea una sessione e non conserva eventi. Accetta
+WAV (decodificato con `hound`) e MP3, M4A/MP4 (AAC) e AAC (decodificati in streaming
+con `symphonia`, dipendenza pura Rust senza ffmpeg), normalizza a mono 16 kHz con
+memoria costante e scrive `<nome>.txt` e `<nome>.md` accanto all'input, rifiutando
+di sovrascrivere file esistenti. Poiché non c'è cattura in tempo reale, elabora più
+velocemente del tempo reale invece di riprodurre l'audio a velocità 1×. Le due
+strade condividono decodifica/normalizzazione, segmentazione VAD e motore ASR, ma
+solo `start` mantiene il transcript canonico JSONL e l'audio di sessione.
 
 Gli export iniziali sono JSONL, testo semplice, Markdown e SRT/VTT. JSONL è il
 formato canonico per gli eventi; gli altri sono derivati.
@@ -236,6 +247,8 @@ di una call sia corretto: deve offrire un test audio esplicito.
 - Rust stabile, edition corrente supportata dal compilatore;
 - `clap` per CLI e configurazione;
 - `cpal` per enumerazione e cattura da dispositivi audio;
+- `hound` per leggere e scrivere WAV;
+- `symphonia` per la decodifica streaming di MP3/M4A/MP4 (AAC) in `transcribe`;
 - canali Rust bounded e thread/worker dedicati;
 - `whisper.cpp` tramite `whisper-rs` o binding equivalente;
 - VAD semplice iniziale, WebRTC VAD dopo benchmark;

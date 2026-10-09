@@ -13,6 +13,7 @@ pub mod schema;
 pub mod segment;
 pub mod session;
 pub mod storage;
+pub mod transcribe;
 pub mod validation;
 
 pub use error::{Error, Result};

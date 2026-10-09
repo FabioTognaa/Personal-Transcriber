@@ -20,6 +20,16 @@ pub enum Format {
     Vtt,
 }
 
+/// A single rendered line: the minimal data shared by the plain-text and
+/// Markdown renderers, also reusable by callers that never build a session
+/// record (for example the one-shot `transcribe` command).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SegmentLine {
+    pub start: TimestampUs,
+    pub end: TimestampUs,
+    pub text: String,
+}
+
 pub fn export_session(
     session: &Path,
     format: Format,
@@ -123,31 +133,42 @@ fn render(segments: &[TranscriptSegment], format: Format) -> Result<String> {
             }
             Ok(output)
         }
-        Format::Text => Ok(render_text(segments)),
-        Format::Markdown => Ok(render_markdown(segments)),
+        Format::Text => Ok(render_text(&segment_lines(segments))),
+        Format::Markdown => Ok(render_markdown(&segment_lines(segments), "Transcript")),
         Format::Srt => Ok(render_subtitles(segments, SubtitleFormat::Srt)),
         Format::Vtt => Ok(render_subtitles(segments, SubtitleFormat::Vtt)),
     }
 }
 
-fn render_text(segments: &[TranscriptSegment]) -> String {
+fn segment_lines(segments: &[TranscriptSegment]) -> Vec<SegmentLine> {
+    segments
+        .iter()
+        .map(|segment| SegmentLine {
+            start: segment.start,
+            end: segment.end,
+            text: segment.text.clone(),
+        })
+        .collect()
+}
+
+pub fn render_text(lines: &[SegmentLine]) -> String {
     let mut output = String::new();
-    for segment in segments {
-        output.push_str(&segment.text);
+    for line in lines {
+        output.push_str(&line.text);
         output.push('\n');
     }
     output
 }
 
-fn render_markdown(segments: &[TranscriptSegment]) -> String {
-    let mut output = String::from("# Transcript\n");
-    for segment in segments {
+pub fn render_markdown(lines: &[SegmentLine], title: &str) -> String {
+    let mut output = format!("# {title}\n");
+    for line in lines {
         output.push_str("\n- `");
-        output.push_str(&format_timestamp(segment.start, '.'));
+        output.push_str(&format_timestamp(line.start, '.'));
         output.push_str(" → ");
-        output.push_str(&format_timestamp(segment.end, '.'));
+        output.push_str(&format_timestamp(line.end, '.'));
         output.push_str("` ");
-        output.push_str(&segment.text);
+        output.push_str(&line.text);
         output.push('\n');
     }
     output

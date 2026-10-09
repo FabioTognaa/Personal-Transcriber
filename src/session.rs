@@ -617,7 +617,7 @@ fn persist_failed_session(
     }
 }
 
-fn validate_language(language: &str) -> Result<()> {
+pub(crate) fn validate_language(language: &str) -> Result<()> {
     if matches!(language, "it" | "en") {
         Ok(())
     } else {

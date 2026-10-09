@@ -17,6 +17,7 @@ libc = "0.2.190"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"
+symphonia = { version = "0.5.4", default-features = false, features = ["mp3", "aac", "isomp4"] }
 signal-hook = "0.3.18"
 thiserror = "2.0.17"
 tracing = "0.1.41"
