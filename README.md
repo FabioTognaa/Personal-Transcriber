@@ -1,4 +1,4 @@
-# personal-transcriber
+#
 
 Welcome to my personal transcriber!
 
@@ -83,7 +83,7 @@ Per quanto riguarda i formati wav, ad oggi non c'è ancora una funzione nativa c
 - `transcribe` elabora un file alla volta e in un solo thread: nel formato
   leggero non esistono pause, ripresa o stato di avanzamento.
 
-## Documentazione
+## Documentazione nel dettaglio
 
 - [Sezione aiuto per tutti i comandi](docs/COMMANDS_HELP.md)
 - [Funzionamento e architettura](docs/RELAZIONE.md)

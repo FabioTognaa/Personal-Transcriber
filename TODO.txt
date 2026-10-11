@@ -1,0 +1,20 @@
+il nuovo nome delle cartelle di sessioni deve diventare YY-MM-DD
+
+voglio che anche per transcribe, venga creata una cartella in /sessions, nella quale viene creato il file .txt e basta, 
+quando transcribe viene completato, ho intenzione di eliminare la produzione del file .md e lasciare solo quella del .txt
+
+
+MIGLIORARE TEMPO DI ATTESA DELLA TRASCRIZIONE DA file
+
+durante la selezione del modello, dopo start, voglio che con 'q' si possa quittare la scelta ed interrompere start
+
+
+durante la sessione di transcript serve una barra di completamento per capire a che punto siamo. importante che la barra venga lockata a schermo e che non vengano scriti tutti i metadati in continuazione, come succede attualmente.
+
+
+valutare se dilatare il tempo di controllo di comandi dal secondo cli a sessione in corso: attualmente ogni 5ms
+
+
+VALUTARE SE LA TRASCRIZIONE FINALE SIA MEGLIO FARLA SUL FILE mixed.wav una volta completo. POTREBBE AIUTARE A MIGLIORARE LA QUALITÀ DI OUTPUT
+
+CAPIRE SE OCCORRE AVERE UNO SHA256 PER I MODELLI, NON NE TROVO UNA CONCRETA UTILITÀ

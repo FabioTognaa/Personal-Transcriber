@@ -26,7 +26,7 @@ vuole la prima registrazione.
 Ci sono due percorsi, uno dopo l'altro.
 
 Il primo è la **registrazione dal vivo con due terminali**. Nel primo terminale
-si lancia `start`. Nel secondo terminale si elencano *tutti* i comandi di
+si lancia `start`. Nel secondo terminale si elencano _tutti_ i comandi di
 controllo che si possono lanciare contro quella sessione — `status`, `pause`,
 `resume`, `stop` — ognuno con una riga che dice cosa fa. Nessuna tabella di
 flag: quella vive altrove.
@@ -54,10 +54,11 @@ In pratica: concetti e passi, mai meccanica interna.
 
 ### Cosa resta com'è
 
-Tutte le sezioni che oggi esistono nel README restano al loro posto:
-`Cattura live`, `Simulatore WAV`, `Trascrivere un file`, `Diagnostica ed
+Tutte le sezioni che oggi esistono nel README restano al loro posto tranne:
+`Cattura live`, `Simulatore WAV`, `Trascrivere un file`,
+le sezioni `Diagnostica ed
 export`, `Limiti noti`, `Documentazione`, `Sviluppo locale`, `Privacy e
-consenso`, `Licenza`.
+consenso`, `Licenza` devono restare.
 
 ## Gli altri due file
 
@@ -83,10 +84,6 @@ rotto.
 
 Due fatti vanno tenuti presenti mentre si scrive, perché riguardano il prodotto
 e non il testo.
-
-La cattura dal vivo **non è mai stata provata end-to-end su una call reale**:
-i test coprono la pipeline su un WAV, non l'ascolto vero dei
-dispositivi. Va scritto con onestà.
 
 Gli artefatti `live-transcript` che si trovano dentro `target/` provengono da
 **un altro progetto**: non sono binari di questo repository e non vanno
