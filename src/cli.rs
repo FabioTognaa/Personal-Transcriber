@@ -86,16 +86,12 @@ pub struct DoctorArgs {
 
 #[derive(Debug, Args)]
 pub struct StartArgs {
-    /// WAV file replayed in real time instead of opening live input devices.
-    #[arg(long)]
-    pub input_wav: Option<PathBuf>,
-
     /// Input device used for the local microphone.
-    #[arg(long, conflicts_with = "input_wav")]
+    #[arg(long)]
     pub microphone: Option<String>,
 
     /// Input device used for remote/system audio, normally BlackHole on macOS.
-    #[arg(long, conflicts_with = "input_wav")]
+    #[arg(long)]
     pub system_audio: Option<String>,
 
     #[command(flatten)]
@@ -246,7 +242,7 @@ pub fn execute(command: Command) -> Result<()> {
             let prompt = resolve_initial_prompt(args.model.asr_prompt, &language);
             let root = crate::session::run(StartOptions {
                 sessions_dir: args.sessions.sessions_dir,
-                input_wav: args.input_wav,
+                input_wav: None,
                 model: Some(model),
                 language,
                 microphone: args.microphone,
@@ -497,8 +493,6 @@ mod tests {
         let cli = Cli::try_parse_from([
             "personal-transcriber",
             "start",
-            "--input-wav",
-            "tests/fixtures/m1_stream.wav",
             "--model",
             "models/fixture.bin",
         ])
@@ -509,10 +503,6 @@ mod tests {
         };
 
         assert_eq!(args.model.language, "it");
-        assert_eq!(
-            args.input_wav,
-            Some(PathBuf::from("tests/fixtures/m1_stream.wav"))
-        );
         assert_eq!(args.model.model, Some(PathBuf::from("models/fixture.bin")));
         assert_eq!(args.sessions.sessions_dir, PathBuf::from("sessions"));
     }
@@ -633,8 +623,6 @@ mod tests {
         let cli = Cli::try_parse_from([
             "personal-transcriber",
             "start",
-            "--input-wav",
-            "tests/fixtures/m1_stream.wav",
             "--model",
             "models/fixture.bin",
             "--language",

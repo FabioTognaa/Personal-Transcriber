@@ -8,47 +8,49 @@ comando fino ai file lasciati sul disco.
 installazione. Per l'uso quotidiano resta il [README](../README.md). Per le decisioni
 di prodotto resta [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md).
 
-## Cosa fa, in una frase
+## Cosa fa
 
 `personal-transcriber` è un programma da terminale. Durante una riunione registra sul Mac
 due audio — il microfono di chi parla e l'audio degli altri, letto tramite BlackHole —
-li mescola, e scrive in italiano o inglese il testo di ciò che è stato detto. Tutto
-resta sul computer. Nessun audio e nessun testo partono verso un servizio esterno.
+li mescola, e scrive in italiano o inglese il testo di ciò che è stato detto.
+Tutto questo viene fatto in locale al 100%.
+Nessun audio e nessun testo partono verso un servizio esterno e viene garantita la privacy dei file prodotti.
 
-Si può anche saltare la riunione e dare al programma un file WAV già pronto. In quel
-caso la pipeline è la stessa: cambia solo la sorgente.
+Il trascrittore può essere usato anche per file audio/video già pronti, in quel caso vngono parsati e viene prodotta la trascrizione audio di tutto quello che viene detto
 
 ## Parole usate più avanti
 
-- **Campione.** Un numero che descrive l'ampiezza dell'onda sonora in un istante.
-- **PCM.** La sequenza di quei campioni. È l'audio "nudo", prima di MP3 o AAC.
-- **Frequenza di campionamento.** Quanti campioni al secondo. Qui il formato interno
+- **Campione.**
+  Un numero che descrive l'ampiezza dell'onda sonora in un istante.
+- **PCM.**
+  La sequenza di quei campioni senza alcuna compressione. È l'audio "nudo", prima di MP3 o AAC.
+- **Frequenza di campionamento.**
+  Quanti campioni al secondo. Qui il formato interno
   è sempre **16.000 campioni al secondo, un solo canale** (mono). Whisper si aspetta
   proprio questo.
-- **Chunk.** Un pezzetto di PCM lungo 20 millisecondi, cioè 320 campioni. Il programma
-  non lavora sull'audio infinito: lo taglia in chunk e li passa avanti.
-- **VAD.** Voice Activity Detection: decidere se un chunk è voce o silenzio, senza
-  capire le parole.
-- **Segmento.** Un intervallo di voce abbastanza lungo da meritare una trascrizione,
-  con un inizio e una fine.
-- **ASR.** Automatic Speech Recognition: il motore che trasforma i campioni in testo.
-  Qui è Whisper, eseguito in locale da whisper.cpp.
-- **BlackHole.** Un dispositivo audio virtuale. La call scrive l'audio anche lì, e
-  questo programma lo legge come se fosse un microfono. Non entra in Zoom, Meet o
-  Teams e non vede le loro credenziali.
-- **JSONL.** Un file di testo con un oggetto JSON per riga. Si può aggiungere una riga
-  senza riscrivere il file. È il formato canonico di eventi e trascrizione.
-- **Sessione.** La directory di una registrazione, con audio, stato, eventi e testo.
+- **Chunk.**
+  Un pezzetto di PCM lungo 20 millisecondi, cioè 320 campioni. Il programma, in questo modo, può gestire l'audio in modo efficiente e senza bloccarsi.
+- **VAD.**
+  Voice Activity Detection: un metodo per riconoscere se il chunk contiene voce o silenzio
+- **Segmento.**
+  Un intervallo di voce abbastanza lungo da meritare una trascrizione,
+  con un inizio e una fine. Vengono considerati segmento di voce un insieme di chunk.
+- **ASR.**
+  Automatic Speech Recognition: il motore che trasforma i campioni in testo.
+  In questo caso viene usato Whisper, un LLM adibito proprio a fare speech recognition e a tradurre lo spettrogramma del parlato.
+- **JSONL.**
+  Formato JSON dei file di log e di trascrizione. Viene salvato per affiancare ai segmenti di prlato prodotti dei metadati.
+
+- **Sessione.**
+  La directory prodotta da una registrazione, con audio, stato, eventi e testo.
 
 ## Stack
 
-Ogni dipendenza ha un ruolo stretto. Non c'è un server, un database né un runtime
-Python nel prodotto.
+- **Rust v1.88+**
+  Linguaggio principale del programma.
+- **Clap**
+  Legge ed esegue il parsing delle righe di comando. Setta le opzioni e i valori di default.
 
-| Pezzo | Ruolo |
-| --- | --- |
-| Rust, edition 2024, minimo 1.88 | Linguaggio del programma. Un binario solo. |
-| `clap` | Legge i comandi e le opzioni. |
 | `cpal` | Elenca i dispositivi CoreAudio e apre i due stream di input. |
 | `hound` | Legge e scrive WAV. |
 | `crossbeam-channel` | Code a capacità fissa tra i thread. |
@@ -71,20 +73,19 @@ o parafrasa.
 indirizzano una sessione (`start`, `doctor`, `status`, `pause`, `resume`, `stop`).
 Tutti accettano `-v` ripetibile.
 
-| Comando | Cosa fa | Cosa non fa |
-| --- | --- | --- |
-| `devices` | Elenca i dispositivi CoreAudio visibili, con formato predefinito e quali sono input/output di default. | Non apre uno stream. |
-| `doctor` | Controlla piattaforma, directory, spazio disco, modello, input e BlackHole. | Senza `--probe-audio` non ascolta. Non cambia le impostazioni di macOS. |
-| `doctor --probe-audio` | Apre microfono e BlackHole per qualche secondo (default 3) e verifica che arrivi segnale. | Non crea una sessione. |
-| `start` | Resta in primo piano fino alla fine. Crea una sessione nuova e stampa il percorso. | Non sovrascrive una sessione già esistente. |
-| `transcribe` | Trascrive un file esistente (WAV, MP3, M4A/MP4, AAC) in `<nome>.txt` e `<nome>.md` accanto all'input, senza creare una sessione. | Non salva audio né eventi, non riproduce a velocità reale e non sovrascrive output esistenti. |
-| `status`, `pause`, `resume`, `stop` | Si lanciano da un secondo terminale. Parlano con `start` tramite file, non tramite rete. | `pause` non ferma la registrazione. |
-| `export` | Legge `transcript.jsonl` e produce JSONL, testo, Markdown, SRT o VTT. | Non modifica il testo. Rifiuta di scrivere sopra i file canonici della sessione. |
+| Comando                             | Cosa fa                                                                                                                          | Cosa non fa                                                                                   |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `devices`                           | Elenca i dispositivi CoreAudio visibili, con formato predefinito e quali sono input/output di default.                           | Non apre uno stream.                                                                          |
+| `doctor`                            | Controlla piattaforma, directory, spazio disco, modello, input e BlackHole.                                                      | Senza `--probe-audio` non ascolta. Non cambia le impostazioni di macOS.                       |
+| `doctor --probe-audio`              | Apre microfono e BlackHole per qualche secondo (default 3) e verifica che arrivi segnale.                                        | Non crea una sessione.                                                                        |
+| `start`                             | Resta in primo piano fino alla fine. Crea una sessione nuova e stampa il percorso.                                               | Non sovrascrive una sessione già esistente.                                                   |
+| `transcribe`                        | Trascrive un file esistente (WAV, MP3, M4A/MP4, AAC) in `<nome>.txt` e `<nome>.md` accanto all'input, senza creare una sessione. | Non salva audio né eventi, non riproduce a velocità reale e non sovrascrive output esistenti. |
+| `status`, `pause`, `resume`, `stop` | Si lanciano da un secondo terminale. Parlano con `start` tramite file, non tramite rete.                                         | `pause` non ferma la registrazione.                                                           |
+| `export`                            | Legge `transcript.jsonl` e produce JSONL, testo, Markdown, SRT o VTT.                                                            | Non modifica il testo. Rifiuta di scrivere sopra i file canonici della sessione.              |
 
-`start` senza `--input-wav` è la cattura live: microfono di default e, se non si passa
+`start` è la cattura live: microfono di default e, se non si passa
 `--system-audio`, il primo input il cui nome contiene `blackhole`. I due dispositivi
-devono essere diversi. Con `--input-wav` i dispositivi non servono: il WAV viene
-riprodotto a velocità reale.
+devono essere diversi.
 
 La lingua predefinita è `it`; `--language en` seleziona l'inglese. Non c'è
 rilevamento automatico e la scelta vale per tutta la sessione.
@@ -238,15 +239,15 @@ sono elencati sotto e vengono tutti salvati in `session.json`. Da CLI si regolan
 solo voce, innesco e fine (`--vad-threshold`, `--vad-start-ms`, `--vad-end-ms`);
 pre-roll, post-roll, minimo e massimo restano fissi:
 
-| Soglia | Default | Effetto |
-| --- | --- | --- |
-| Voce | RMS ≥ 0,02 | Distingue voce e silenzio. |
-| Innesco | 60 ms di voce | Un click isolato non apre un segmento. |
-| Fine | 800 ms di silenzio | Una pausa breve dentro la frase non la spezza. |
-| Pre-roll | 200 ms | Quando la voce è confermata, si tiene anche un po' di audio precedente, per non tagliare l'attacco. |
-| Post-roll | 200 ms | Si tiene un po' di audio dopo l'ultima voce, senza superare la fine del chunk corrente. |
-| Minimo | 100 ms di voce | Sotto questa durata il segmento si scarta e il contatore `segments_discarded` sale. |
-| Massimo | 30 s | Un intervento lungo viene tagliato e il contatore degli split sale. Il taglio non butta campioni: il seguito diventa il segmento successivo. |
+| Soglia    | Default            | Effetto                                                                                                                                      |
+| --------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Voce      | RMS ≥ 0,02         | Distingue voce e silenzio.                                                                                                                   |
+| Innesco   | 60 ms di voce      | Un click isolato non apre un segmento.                                                                                                       |
+| Fine      | 800 ms di silenzio | Una pausa breve dentro la frase non la spezza.                                                                                               |
+| Pre-roll  | 200 ms             | Quando la voce è confermata, si tiene anche un po' di audio precedente, per non tagliare l'attacco.                                          |
+| Post-roll | 200 ms             | Si tiene un po' di audio dopo l'ultima voce, senza superare la fine del chunk corrente.                                                      |
+| Minimo    | 100 ms di voce     | Sotto questa durata il segmento si scarta e il contatore `segments_discarded` sale.                                                          |
+| Massimo   | 30 s               | Un intervento lungo viene tagliato e il contatore degli split sale. Il taglio non butta campioni: il seguito diventa il segmento successivo. |
 
 Il segmentatore gira su un thread proprio. Il loop principale gli manda i chunk con
 un invio non bloccante, su una coda da 64. Se la coda è piena, l'audio è già sul
