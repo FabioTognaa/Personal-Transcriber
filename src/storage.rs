@@ -293,7 +293,10 @@ pub(crate) fn session_directory_name(started_at_unix_ms: u64) -> Result<String> 
     Ok(format!("{year:02}-{month:02}-{mday:02}", mday = tm.tm_mday))
 }
 
-fn create_session_directory(sessions_dir: &Path, started_at_unix_ms: u64) -> Result<PathBuf> {
+pub(crate) fn create_session_directory(
+    sessions_dir: &Path,
+    started_at_unix_ms: u64,
+) -> Result<PathBuf> {
     let base = session_directory_name(started_at_unix_ms)?;
     for attempt in 1u32..=1_000 {
         let name = if attempt == 1 {

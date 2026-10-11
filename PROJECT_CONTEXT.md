@@ -94,8 +94,10 @@ la sessione.
 esistente: non registra audio, non crea una sessione e non conserva eventi. Accetta
 WAV (decodificato con `hound`) e MP3, M4A/MP4 (AAC) e AAC (decodificati in streaming
 con `symphonia`, dipendenza pura Rust senza ffmpeg), normalizza a mono 16 kHz con
-memoria costante e scrive `<nome>.txt` e `<nome>.md` accanto all'input, rifiutando
-di sovrascrivere file esistenti. Poiché non c'è cattura in tempo reale, elabora più
+memoria costante e scrive `<nome>.txt` in una cartella nuova sotto `--sessions-dir`
+(stesso nome `YY-MM-DD` di `start`), senza produrre Markdown né altri file. La
+cartella nasce solo a trascrizione riuscita: non sovrascrive nulla e a fallimento
+non resta niente. Poiché non c'è cattura in tempo reale, elabora più
 velocemente del tempo reale invece di riprodurre l'audio a velocità 1×. Le due
 strade condividono decodifica/normalizzazione, segmentazione VAD e motore ASR, ma
 solo `start` mantiene il transcript canonico JSONL e l'audio di sessione.

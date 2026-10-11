@@ -135,10 +135,11 @@ personal-transcriber start [opzioni]
 personal-transcriber transcribe <FILE> [opzioni]
 ```
 
-Trascrive un file audio esistente in `<nome>.txt` e `<nome>.md` accanto al path di input
-all'input, senza creare una sessione e senza salvare audio. Se uno dei due file
-di output esiste già, il comando si ferma senza sovrascriverlo. Elabora un solo
-file per invocazione, in un unico thread.
+Trascrive un file audio esistente, senza registrare e senza conservare audio: in
+`sessions/` nasce una cartella nuova (stesso nome `YY-MM-DD` di `start`) con dentro
+solo `<nome>.txt`. Non sovrascrive mai nulla, perché la cartella è nuova; se la
+trascrizione fallisce non resta niente sul disco. Elabora un solo file per
+invocazione, in un unico thread.
 
 | Argomento/Opzione              | Tipo         | Default            | Descrizione                                    |
 | ------------------------------ | ------------ | ------------------ | ---------------------------------------------- |
@@ -151,6 +152,7 @@ file per invocazione, in un unico thread.
 | `--vad-start-ms <MS>`          | intero       | `60`               | Vedi “Segmentazione vocale”.                   |
 | `--vad-end-ms <MS>`            | intero       | `800`              | Vedi “Segmentazione vocale”.                   |
 | `--asr-flash-attention <BOOL>` | booleano     | `true`             | Vedi “Inferenza”.                              |
+| `--sessions-dir <PERCORSO>`    | percorso     | `sessions`         | Directory in cui creare la cartella di output. |
 
 I WAV passano dal lettore in memoria, quindi ereditano il limite di 64 MiB e 30
 minuti; gli altri formati sono decodificati in streaming e non hanno tale

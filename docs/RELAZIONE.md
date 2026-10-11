@@ -67,7 +67,7 @@ Se la frequenza non è 16 kHz, un ricampionamento lineare cambia il numero di ca
 La segmentazione qui non avviene in tempo reale. Attualmente, per un file mp4 di 90m, vengono impiegati all'incirca 30m di trascrizione.
 Ogni chunk viene scritto e processato da Whisper alla massima velocità.
 
-Una volta conclusa la trascrizione vengono scritti due file accanto all'input, con lo stesso nome e le estensioni `.txt` e `.md`. I file esistenti non vengono sovrascritti. Non nasce nessuna sessione e nessun audio viene conservato: `transcribe` non registra e non produce un transcript canonico JSONL esportabile.
+Una volta conclusa la trascrizione nasce una cartella nuova sotto `sessions/` (stesso nome `YY-MM-DD` di `start`) con dentro solo `<nome>.txt`. Non nasce nessuna sessione: nessun audio viene conservato, nessun `session.json` e nessun transcript canonico JSONL esportabile. Il Markdown resta ottenibile con `export --format markdown` su una sessione di `start`.
 [DA MIGLIORARE]
 
 ## Il flusso, dall'inizio alla fine

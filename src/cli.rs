@@ -27,8 +27,8 @@ pub struct Cli {
 }
 
 /// Directory holding session directories. Only the commands that create or
-/// address a session expose it, so `devices` and `transcribe` do not advertise a
-/// flag they would ignore.
+/// address a session expose it, so `devices` does not advertise a flag it would
+/// ignore.
 #[derive(Debug, Args)]
 pub struct SessionsDirArgs {
     /// Directory under which session directories are created.
@@ -44,7 +44,7 @@ pub enum Command {
     Doctor(DoctorArgs),
     /// Start a local recording and transcription session.
     Start(StartArgs),
-    /// Transcribe an existing audio file to `<stem>.txt` and `<stem>.md`.
+    /// Transcribe an existing audio file into a new directory under `sessions/`.
     Transcribe(TranscribeArgs),
     /// Show the current session state and backlog.
     Status(SessionsDirArgs),
@@ -120,6 +120,9 @@ pub struct TranscribeArgs {
 
     #[command(flatten)]
     pub inference: InferenceArgs,
+
+    #[command(flatten)]
+    pub sessions: SessionsDirArgs,
 }
 
 /// Model selection and language, shared by `start` and `transcribe`.
@@ -263,6 +266,7 @@ pub fn execute(command: Command) -> Result<()> {
             crate::transcribe::run(crate::transcribe::TranscribeOptions {
                 input: args.input,
                 model,
+                sessions_dir: args.sessions.sessions_dir,
                 language,
                 segmenter: segmenter_config(&args.vad),
                 inference: inference_config(&args.inference, prompt),

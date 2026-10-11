@@ -12,6 +12,11 @@ Se più sessioni partono nello stesso giorno, la seconda aggiunge un intero in f
 L'ordinamento alfabetico coincide con quello cronologico per giorno; dentro lo stesso giorno dipende dal suffisso.
 Questo nome comunque non funge da identificare. Puoi trovare l'UUID `current-session.json`.
 
+Anche `transcribe` crea una cartella qui (stesso nome `YY-MM-DD`, `_2`, `_3`… su
+collisione), ma è **inerte**: contiene solo il `<nome>.txt` prodotto, senza
+`session.json`, `audio/`, eventi o transcript canonico. Non è una sessione e nessun
+comando la scopre.
+
 Ogni registrazione e transcript resta sul disco locale e viene ignorata nel
 repository.
 

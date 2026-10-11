@@ -347,19 +347,24 @@ sintetico lungo — il report nota che l'effetto del batching non e' ancora misu
 7. STATO DEL CODICE (al 2026-10-11)
 ================================================================================
 
-Tre decisioni di questa map sono GIA' state scritte in codice, ma NON committate
+Cinque decisioni di questa map sono GIA' state scritte in codice, ma NON committate
 (working tree su `main`, nessun branch, nessun commit):
 
-- #2 cartelle `YY-MM-DD` -> `src/storage.rs` (+ test, + doc)
-- #3 `q` annulla             -> `src/cli.rs` (+ test, + `docs/COMMANDS_HELP.md`)
-- #7 SHA-256 best-effort     -> `src/session.rs` (+ test)
+- #2 cartelle `YY-MM-DD`      -> `src/storage.rs` (+ test, + doc)
+- #3 `q` annulla              -> `src/cli.rs` (+ test, + `docs/COMMANDS_HELP.md`)
+- #4 `transcribe` senza `.md` -> `src/transcribe.rs` (+ test, + doc) [fuso con #5]
+- #5 `transcribe` in cartella -> `src/transcribe.rs`, `src/cli.rs`, `src/storage.rs` (+ test, + doc)
+- #7 SHA-256 best-effort      -> `src/session.rs` (+ test)
 
-`cargo fmt`, `cargo clippy --all-targets` e `cargo test` (81 test) passano.
-#4, #5, #6, #8, #10 NON hanno codice.
+`cargo fmt`, `cargo clippy --all-targets` e `cargo test` (82 test) passano.
+Verifica end-to-end con `models/ggml-small-q5_1.bin`: primo run
+`sessions/26-10-11/fixture.txt`, secondo `sessions/26-10-11_2/fixture.txt`, dentro
+solo il `.txt`; a fallimento nessuna cartella creata.
+#6, #8, #10 NON hanno codice (decisione ancora aperta).
 
 Altri file modificati/non tracciati nello stesso tree:
-- modificati: CHANGELOG.md, PROJECT_CONTEXT.md, README.md, docs/RELAZIONE.md,
-  sessions/README.md, TODO.txt (questo file)
+- modificati: CHANGELOG.md, PIANO_DOCUMENTAZIONE.md, PROJECT_CONTEXT.md, README.md,
+  docs/RELAZIONE.md, sessions/README.md, TODO.txt (questo file)
 - non tracciati: AGENTS.md, docs/agents/, .agents/, skills-lock.json
 
 

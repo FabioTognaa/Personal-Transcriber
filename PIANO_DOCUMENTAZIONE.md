@@ -32,8 +32,8 @@ controllo che si possono lanciare contro quella sessione — `status`, `pause`,
 flag: quella vive altrove.
 
 Il secondo è la **trascrizione di un file**: il comando `transcribe` con il
-file e la lingua, e i due file che ne escono accanto all'input, il `.txt` e il
-`.md`. Va detto chiaramente che in questo caso non nasce nessuna sessione.
+file e la lingua, e il `.txt` che ne esce dentro una cartella nuova sotto
+`sessions/`. Va detto chiaramente che in questo caso non nasce nessuna sessione.
 
 ### Le due funzionalità
 

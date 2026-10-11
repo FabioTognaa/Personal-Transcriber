@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::asr::{AsrEngine, WhisperEngine, validate_inference_config};
 use crate::audio::{CompressedAudioSource, FileAudioSource};
 use crate::domain::{InferenceConfig, PcmChunk, SegmenterConfig, SpeechSegment};
-use crate::export::{SegmentLine, render_markdown, render_text};
+use crate::export::{SegmentLine, render_text};
 use crate::segment::Segmenter;
 use crate::{Error, Result};
 
@@ -12,29 +12,23 @@ use crate::{Error, Result};
 pub struct TranscribeOptions {
     pub input: PathBuf,
     pub model: PathBuf,
+    pub sessions_dir: PathBuf,
     pub language: String,
     pub segmenter: SegmenterConfig,
     pub inference: InferenceConfig,
 }
 
-/// One-shot transcription of an existing audio file. Unlike `start` it creates no
-/// session directory and stores no audio: it writes `<stem>.txt` and `<stem>.md`
-/// next to the input. Files are decoded concurrently with inference, so a long
-/// recording finishes in decode + ASR time instead of real time.
+/// One-shot transcription of an existing audio file. Unlike `start` it stores no
+/// audio and creates no session: the transcript is written as `<stem>.txt` inside a
+/// fresh, inert directory under `sessions_dir`, named after the day the run started.
 pub fn run(options: TranscribeOptions) -> Result<()> {
     crate::session::validate_language(&options.language)?;
     validate_inference_config(&options.inference)?;
+    crate::validation::validate_directory_target(&options.sessions_dir, "sessions directory")?;
     crate::validation::validate_existing_file(&options.input, "input audio")?;
-
-    let txt_path = options.input.with_extension("txt");
-    let md_path = options.input.with_extension("md");
-    for path in [&txt_path, &md_path] {
-        if path.exists() {
-            return Err(Error::OutputExists(path.clone()));
-        }
-    }
-
     crate::validation::validate_existing_file(&options.model, "model")?;
+
+    let started_at_unix_ms = crate::storage::unix_time_ms()?;
     let mut engine = WhisperEngine::load(&options.model, &options.inference)?;
     let mut source = AudioInput::open(&options.input)?;
     let mut segmenter = Segmenter::new(options.segmenter.clone())?;
@@ -46,16 +40,26 @@ pub fn run(options: TranscribeOptions) -> Result<()> {
         &options.inference,
     )?;
 
-    let title = options
-        .input
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or("transcript");
-    std::fs::write(&txt_path, render_text(&lines))?;
-    std::fs::write(&md_path, render_markdown(&lines, title))?;
+    // The directory is allocated only once the transcript is in hand, so a failure
+    // above leaves nothing behind.
+    std::fs::create_dir_all(&options.sessions_dir)?;
+    let directory =
+        crate::storage::create_session_directory(&options.sessions_dir, started_at_unix_ms)?;
+    let txt_path = write_transcript(&directory, &options.input, &lines)?;
     println!("{}", txt_path.display());
-    println!("{}", md_path.display());
     Ok(())
+}
+
+/// Writes `<stem>.txt` into `directory` and returns its path. Nothing else is written.
+fn write_transcript(directory: &Path, input: &Path, lines: &[SegmentLine]) -> Result<PathBuf> {
+    let mut path = directory.join(
+        input
+            .file_stem()
+            .unwrap_or_else(|| OsStr::new("transcript")),
+    );
+    path.set_extension("txt");
+    std::fs::write(&path, render_text(lines))?;
+    Ok(path)
 }
 
 /// Decode, segment and transcribe in a single thread. Generic over the engine so
@@ -214,23 +218,55 @@ mod tests {
     }
 
     #[test]
-    fn existing_outputs_are_not_overwritten() {
+    fn write_transcript_writes_only_the_txt_file() {
         let temporary = tempfile::tempdir().expect("temp dir");
+        let directory = temporary.path().join("26-10-11");
+        std::fs::create_dir(&directory).expect("session dir");
+        let lines = vec![SegmentLine {
+            start: TimestampUs(0),
+            end: TimestampUs(200_000),
+            text: "ciao".to_owned(),
+        }];
+
+        let path = write_transcript(&directory, Path::new("/audio/meeting.wav"), &lines)
+            .expect("transcript is written");
+
+        assert_eq!(path, directory.join("meeting.txt"));
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("readable"),
+            render_text(&lines)
+        );
+        let entries: Vec<_> = std::fs::read_dir(&directory)
+            .expect("readable directory")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(entries, vec![std::ffi::OsString::from("meeting.txt")]);
+    }
+
+    #[test]
+    fn failed_run_leaves_no_session_directory() {
+        let temporary = tempfile::tempdir().expect("temp dir");
+        let sessions_dir = temporary.path().join("sessions");
         let input = temporary.path().join("meeting.wav");
         write_voiced_wav(&input);
-        std::fs::write(temporary.path().join("meeting.txt"), b"existing").expect("output");
 
-        let error = run(TranscribeOptions {
-            input: input.clone(),
+        run(TranscribeOptions {
+            input,
             model: temporary.path().join("missing-model.bin"),
+            sessions_dir: sessions_dir.clone(),
             language: "it".to_owned(),
             segmenter: SegmenterConfig::default(),
             inference: InferenceConfig::default(),
         })
-        .expect_err("existing output must be refused");
+        .expect_err("a missing model must fail the run");
 
-        assert!(
-            matches!(error, Error::OutputExists(path) if path == temporary.path().join("meeting.txt"))
-        );
+        let leftover = if sessions_dir.exists() {
+            std::fs::read_dir(&sessions_dir)
+                .expect("readable directory")
+                .count()
+        } else {
+            0
+        };
+        assert_eq!(leftover, 0, "no session directory should be left behind");
     }
 }
