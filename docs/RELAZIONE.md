@@ -50,72 +50,27 @@ Il trascrittore può essere usato anche per file audio/video già pronti, in que
   Linguaggio principale del programma.
 - **Clap**
   Legge ed esegue il parsing delle righe di comando. Setta le opzioni e i valori di default.
+- **`cpal`**
+  Serve per aprire i due stream di input e catturare i campioni di audio analogici
+- **`hound`**
+  Serve per leggere e scrivere file WAV (PCM), in streaming, senza decodifica di altri formati.
+- **`whisper-rs`**
+  È il motore che serve per far girare i modelli AI Whisper, una volta che le rispettive matrici dei pesi vengono caricate in memoria. permette la trascrizione vera e propria del parlato
 
-| `cpal` | Elenca i dispositivi CoreAudio e apre i due stream di input. |
-| `hound` | Legge e scrive WAV. |
-| `crossbeam-channel` | Code a capacità fissa tra i thread. |
-| `whisper-rs` 0.16.0 | Binding Rust verso whisper.cpp. Di default compila con Metal, quindi l'inferenza usa la GPU Apple. Core ML esiste come feature separata ed è spenta. |
-| Modello GGML | Whisper multilingue, scelto con `--model-preset` (`small` Q5_1 ~190 MB, `medium` Q5_0 ~540 MB, `large-v3-turbo` Q8_0 ~874 MB, `large-v3` Q5_0 ~1,1 GB) oppure con `--model <percorso>`. Usato con lingua `it` o `en`. |
-| `sha2` | Calcola il SHA-256 del modello e lo salva su ogni segmento, così si sa quale file ha prodotto il testo. |
-| `serde` / `serde_json` | Legge e scrive JSON e JSONL. |
-| `uuid` | Identifica sessione e segmento. |
-| `signal-hook` | Intercetta Ctrl-C (`SIGINT`) e `SIGTERM` senza uccidere il processo a metà scrittura. |
-| `libc` | Lock esclusivo su file (`flock`), usato per non avere due `start` insieme. |
-| `tracing` | Log diagnostici su standard error. Il livello sale con `-v`. |
-| `tempfile` | Solo nei test. |
+### File in Input
 
-Il testo finale è quello uscito da Whisper. Nessun secondo modello corregge, riassume
-o parafrasa.
+Attualmente i file supportati sono `wav`, `mp3`, `m4a`, `mp4` e `aac`. Un'estensione diversa viene rifiutata prima di decodificare.
+Un WAV viene letto tutto e tenuto in memoria, quindi ha un tetto: oltre 64 MiB o oltre 30 minuti viene rifiutato. I formati compressi vengono invece decodificati un pacchetto alla volta, con memoria costante e senza limite di durata.
+In questa fase occorre portare il file a PCM mono a 16 kHz, ma il file non viene convertito in Wav: viene trattato direttamente nel suo formato, per evitare lo spreco di computazione di un Wav che verrebbe scartato alla fine.
+Se la frequenza non è 16 kHz, un ricampionamento lineare cambia il numero di campioni mantenendo la durata.
 
-## I comandi
+La segmentazione qui non avviene in tempo reale. Attualmente, per un file mp4 di 90m, vengono impiegati all'incirca 30m di trascrizione.
+Ogni chunk viene scritto e processato da Whisper alla massima velocità.
 
-`--sessions-dir` (default `sessions`) è disponibile sui comandi che creano o
-indirizzano una sessione (`start`, `doctor`, `status`, `pause`, `resume`, `stop`).
-Tutti accettano `-v` ripetibile.
-
-| Comando                             | Cosa fa                                                                                                                          | Cosa non fa                                                                                   |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `devices`                           | Elenca i dispositivi CoreAudio visibili, con formato predefinito e quali sono input/output di default.                           | Non apre uno stream.                                                                          |
-| `doctor`                            | Controlla piattaforma, directory, spazio disco, modello, input e BlackHole.                                                      | Senza `--probe-audio` non ascolta. Non cambia le impostazioni di macOS.                       |
-| `doctor --probe-audio`              | Apre microfono e BlackHole per qualche secondo (default 3) e verifica che arrivi segnale.                                        | Non crea una sessione.                                                                        |
-| `start`                             | Resta in primo piano fino alla fine. Crea una sessione nuova e stampa il percorso.                                               | Non sovrascrive una sessione già esistente.                                                   |
-| `transcribe`                        | Trascrive un file esistente (WAV, MP3, M4A/MP4, AAC) in `<nome>.txt` e `<nome>.md` accanto all'input, senza creare una sessione. | Non salva audio né eventi, non riproduce a velocità reale e non sovrascrive output esistenti. |
-| `status`, `pause`, `resume`, `stop` | Si lanciano da un secondo terminale. Parlano con `start` tramite file, non tramite rete.                                         | `pause` non ferma la registrazione.                                                           |
-| `export`                            | Legge `transcript.jsonl` e produce JSONL, testo, Markdown, SRT o VTT.                                                            | Non modifica il testo. Rifiuta di scrivere sopra i file canonici della sessione.              |
-
-`start` è la cattura live: microfono di default e, se non si passa
-`--system-audio`, il primo input il cui nome contiene `blackhole`. I due dispositivi
-devono essere diversi.
-
-La lingua predefinita è `it`; `--language en` seleziona l'inglese. Non c'è
-rilevamento automatico e la scelta vale per tutta la sessione.
-
-Il modello si sceglie con `--model-preset` (`small` predefinito, `medium`,
-`large-v3-turbo`, `large-v3`) oppure con `--model <percorso>`, che ha la
-precedenza. Ogni preset punta a un file documentato sotto `models/`. Avviando
-`start` da terminale senza alcun flag del modello, compare un menu che elenca i
-preset (con stato scaricato/mancante) e gli altri file `.bin` in `models/`; Invio
-accetta `small`, un numero sceglie, `p` permette di digitare un percorso. Senza
-terminale (script, CI, test) il menu non compare e vale il default `small`.
-
-`start` applica anche un prompt iniziale a Whisper: quello predefinito della
-lingua, oppure quello passato con `--asr-prompt` (utile per un glossario di nomi e
-sigle). `--asr-prompt ""` lo disattiva.
+Una volta conclusa la trascrizione nasce una cartella nuova sotto `sessions/` (stesso nome `YY-MM-DD` di `start`) con dentro solo `<nome>.txt`. Non nasce nessuna sessione: nessun audio viene conservato, nessun `session.json` e nessun transcript canonico JSONL esportabile. Il Markdown resta ottenibile con `export --format markdown` su una sessione di `start`.
+[DA MIGLIORARE]
 
 ## Il flusso, dall'inizio alla fine
-
-```text
-comando start
-    → carica il modello e ne calcola l'identità
-    → apre la sorgente (WAV oppure microfono + BlackHole)
-    → crea la directory di sessione
-    → tre lavori in parallelo:
-         acquisizione → coda audio → loop principale
-         loop principale → coda segmenti → VAD
-         VAD → coda ASR → Whisper → transcript.jsonl
-    → stop, fine del file, oppure segnale
-    → chiude i WAV, scrive lo stato finale, stampa il percorso
-```
 
 `start` fa questo, in ordine.
 
@@ -135,7 +90,7 @@ comando start
    cattura live non ha questi tetti, perché non tiene l'intero audio in RAM.
 7. Controlla lo spazio disco. Per un WAV stima i byte della sessione. Per la live
    pretende almeno 64 MiB liberi, e ricontrolla ogni 5 secondi.
-8. Crea la directory `sessions/YYYY-MM-DD_HH-MM-SS/` (ora locale di inizio) e i file
+8. Crea la directory `sessions/YY-MM-DD/` (giorno locale di inizio) e i file
    vuoti. Lo stato passa a `running` solo dopo che il worker ASR è partito. Se
    quell'avvio fallisce, la sessione viene chiusa come `failed` con i WAV finalizzati,
    anche se sono ancora a zero campioni.
@@ -149,17 +104,6 @@ comando start
 
 Il resto del programma non sa se i chunk arrivano da un file o da CoreAudio. Vede
 solo PCM mono a 16 kHz, con un timestamp in microsecondi dall'inizio della sessione.
-
-### File WAV
-
-Il file viene letto tutto, convertito e tenuto in memoria. Qualsiasi WAV intero a
-8, 16, 24 o 32 bit, oppure float a 32 bit, viene portato a mono: se ci sono più
-canali, si fa la media. Se la frequenza non è 16 kHz, un ricampionamento lineare
-cambia il numero di campioni mantenendo la durata.
-
-Poi i chunk escono **a velocità reale**. Un chunk che nel file inizia a 2,0 secondi
-viene consegnato quando sono passati circa 2,0 secondi di orologio. Serve a provare
-pause, code e ritardo come in una call, senza una call.
 
 ### Microfono e BlackHole
 
@@ -262,6 +206,21 @@ la frase, più l'inferenza", non un flusso di parole aggiornato ogni decimo di
 secondo. L'obiettivo di progetto è un segmento finale nell'ordine dei 3–15 secondi,
 non un sottotitolo istantaneo.
 
+## Whisper
+
+Il progetto si appoggia a `whisper-rs` per usare whisper.cpp in locale. Fa girare uno dei modelli che si trovano in `models/`, caricati in memoria una volta sola quando il programma viene inizializzato. Il suo compito è tradurre in testo i campioni che il VAD gli passa come PCM float mono a 16 kHz.
+
+1. Viene validata la config di inferenza: numero di thread, strategia di decodifica, ampiezza del fascio, temperatura e prompt devono essere coerenti fra loro; Core ML viene rifiutato se il binario non è stato compilato per supportarlo.
+2. Il file GGML viene aperto e i pesi caricati in memoria, con la GPU accesa (Metal su Apple Silicon) e la flash attention attiva salvo disattivazione esplicita. Il contesto resta vivo per tutta la sessione e viene riusato da ogni segmento.
+3. Prima del caricamento viene calcolato lo SHA-256 del file del modello. Il calcolo ha una cache: finché dimensione e data del file non cambiano, l'hash viene riletto senza rileggere i pesi. L'hash finisce in ogni riga del transcript.
+4. Per ogni segmento viene creato uno stato di decodifica nuovo. I pesi sono condivisi, lo stato no: è questo che rende economico trascrivere molti segmenti brevi uno dopo l'altro.
+5. La chiamata vera e propria esegue la pipeline classica di Whisper, in quattro fasi:
+   - **spettrogramma log-Mel**: i campioni diventano uno spettrogramma a 80 canali, riempito fino alla finestra di 30 secondi che Whisper usa come unità;
+   - **encoder**: un transformer traduce lo spettrogramma in feature acustiche;
+   - **decoder**: genera i token del testo uno alla volta, con la strategia scelta (beam search o greedy), fermandosi al token di fine;
+   - **segmenti e timestamp**: Whisper produce micro-segmenti con i propri timestamp.
+6. I timestamp interni di Whisper vengono ignorati. Il programma concatena il testo di tutti i micro-segmenti in un'unica stringa e associa a quella stringa l'intervallo deciso dal VAD, non quello di Whisper. La granularità temporale del transcript è quindi quella dei segmenti, non delle singole parole.
+
 ## Da segmento a testo
 
 Il worker ASR ha una coda da 8 segmenti. Qui l'invio è bloccante: se Whisper è
@@ -322,7 +281,7 @@ esce da quella directory viene rifiutato.
 ## I file di una sessione
 
 ```text
-sessions/YYYY-MM-DD_HH-MM-SS/
+sessions/YY-MM-DD/
   session.json        chi, quando, con quale configurazione
   status.json         fotografia aggiornata mentre gira, e stato finale
   events.jsonl        avvio, pause, riprese, stop, errori
@@ -371,19 +330,6 @@ exit code diverso da zero.
 Il permesso del microfono e il routing vero della call restano non verificati finché
 non si usa `--probe-audio`, e anche quello dice solo se in quei secondi è arrivato
 segnale. Non può sapere se Zoom sta mandando l'audio al dispositivo giusto.
-
-## Cosa il programma rifiuta di fare
-
-- Non manda audio, testo o telemetria fuori dal Mac.
-- Non aggiorna sé stesso e non cancella sessioni da solo.
-- Non cifra i file. La privacy dipende dai permessi della directory e da chi ha
-  accesso al computer.
-- Non separa le voci dei partecipanti.
-- Non sceglie la lingua da solo e non gira su Windows o Linux.
-- Non è un'interfaccia grafica e non è un bot della riunione.
-- Non promette una trascrizione certificata parola per parola. "Raw" qui significa:
-  l'audio originale resta la fonte, e il testo è esattamente l'uscita di Whisper,
-  con accanto il modello che l'ha prodotto.
 
 La prova su una call reale, con BlackHole installato, non fa ancora parte di ciò
 che questo repository può garantire da solo. I controlli automatici coprono la

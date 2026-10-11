@@ -194,13 +194,30 @@ impl SegmentSink for NullSegmentSink {
     }
 }
 
+/// Model identity for `start`, degraded to a hash-less identity when hashing fails
+/// so a transient I/O error cannot abort a recording.
+fn best_effort_identity(path: &Path) -> ModelIdentity {
+    model_identity(path).unwrap_or_else(|_| ModelIdentity {
+        path: path.to_path_buf(),
+        name: path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default()
+            .to_owned(),
+        sha256: String::new(),
+        size_bytes: 0,
+    })
+}
+
 pub fn run(options: StartOptions) -> Result<PathBuf> {
     let shutdown = ShutdownSignals::install()?;
     validate_language(&options.language)?;
     validate_inference_config(&options.inference)?;
     let model_path = options.model.as_deref().ok_or(Error::ModelRequired)?;
     crate::validation::validate_existing_file(model_path, "model")?;
-    let identity = model_identity(model_path)?;
+    // Best effort: an I/O hiccup while hashing (or a non-UTF-8 filename) must not
+    // block a recording session. The identity is recorded as-is; `doctor` stays strict.
+    let identity = best_effort_identity(model_path);
     let engine = WhisperEngine::load(model_path, &options.inference)?;
     let mut sink = TranscribingSink::new(
         engine,
@@ -1028,13 +1045,23 @@ impl RunnerGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_language;
+    use super::{best_effort_identity, validate_language};
     use crate::Error;
+    use std::path::Path;
 
     #[test]
     fn supported_languages_are_accepted() {
         assert!(validate_language("it").is_ok());
         assert!(validate_language("en").is_ok());
+    }
+
+    #[test]
+    fn missing_model_still_yields_a_hashless_identity() {
+        let identity = best_effort_identity(Path::new("/nonexistent/model.bin"));
+
+        assert_eq!(identity.name, "model.bin");
+        assert_eq!(identity.sha256, "");
+        assert_eq!(identity.size_bytes, 0);
     }
 
     #[test]

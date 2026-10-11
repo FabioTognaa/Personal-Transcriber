@@ -287,18 +287,16 @@ pub(crate) fn session_directory_name(started_at_unix_ms: u64) -> Result<String> 
     let year = tm
         .tm_year
         .checked_add(1900)
-        .ok_or(Error::TimestampOverflow)?;
+        .ok_or(Error::TimestampOverflow)?
+        .rem_euclid(100);
     let month = tm.tm_mon.checked_add(1).ok_or(Error::TimestampOverflow)?;
-    Ok(format!(
-        "{year:04}-{month:02}-{mday:02}_{hour:02}-{minute:02}-{second:02}",
-        mday = tm.tm_mday,
-        hour = tm.tm_hour,
-        minute = tm.tm_min,
-        second = tm.tm_sec,
-    ))
+    Ok(format!("{year:02}-{month:02}-{mday:02}", mday = tm.tm_mday))
 }
 
-fn create_session_directory(sessions_dir: &Path, started_at_unix_ms: u64) -> Result<PathBuf> {
+pub(crate) fn create_session_directory(
+    sessions_dir: &Path,
+    started_at_unix_ms: u64,
+) -> Result<PathBuf> {
     let base = session_directory_name(started_at_unix_ms)?;
     for attempt in 1u32..=1_000 {
         let name = if attempt == 1 {
@@ -486,16 +484,13 @@ mod tests {
 
     fn is_session_directory_name(name: &str) -> bool {
         let bytes = name.as_bytes();
-        bytes.len() == 19
-            && bytes[4] == b'-'
-            && bytes[7] == b'-'
-            && bytes[10] == b'_'
-            && bytes[13] == b'-'
-            && bytes[16] == b'-'
+        bytes.len() == 8
+            && bytes[2] == b'-'
+            && bytes[5] == b'-'
             && bytes
                 .iter()
                 .enumerate()
-                .all(|(index, byte)| matches!(index, 4 | 7 | 10 | 13 | 16) || byte.is_ascii_digit())
+                .all(|(index, byte)| matches!(index, 2 | 5) || byte.is_ascii_digit())
     }
 
     fn chunk(source: AudioSourceKind, value: f32) -> PcmChunk {

@@ -17,4 +17,8 @@ pub fn init(verbosity: u8) {
         .with_writer(std::io::stderr)
         .try_init()
         .ok();
+
+    // Route whisper.cpp/ggml logging through `tracing` so its verbosity follows
+    // `-v` instead of always writing to stderr. Global and idempotent.
+    whisper_rs::install_logging_hooks();
 }

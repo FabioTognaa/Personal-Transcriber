@@ -1,0 +1,409 @@
+================================================================================
+TODO — personal-transcriber
+Materiale della map wayfinder "nuove feature personal-transcriber"
+================================================================================
+
+Salvato il 2026-10-11 da GitHub: map issue #1 + ticket figli #2..#10.
+La map su GitHub e' stata cancellata: questo file e' ora l'unica copia.
+
+Indice
+  1. Destination
+  2. Notes (contesto operativo)
+  3. Decisioni CHIUSE (7 ticket risolti) — con il dettaglio di implementazione
+  4. Ticket APERTI (2, non ancora decisi)
+  5. Fog — "Not yet specified"
+  6. Out of scope
+  7. Stato del codice
+  8. Appendice: note originali pre-map
+
+
+================================================================================
+1. DESTINATION
+================================================================================
+
+Un piano decision-complete, pronto per l'implementazione, del pacchetto di nuove
+feature: nomi cartella sessione `YY-MM-DD`, `q` che annulla la selezione del
+modello, `transcribe` che scrive solo `.txt` in una cartella di `sessions/`, barra
+di avanzamento per `transcribe`, piu' la valutazione dell'utilita' dello SHA-256
+dei modelli e del tempo di attesa di `transcribe`.
+
+La mappa e' chiusa quando non resta nessuna decisione da prendere e il piano e'
+completo. Questa mappa e' SOLO pianificazione: non si scrive codice qui.
+
+
+================================================================================
+2. NOTES (contesto operativo)
+================================================================================
+
+- Dominio: CLI Rust locale di registrazione/trascrizione live (`personal-transcriber`).
+- Skill utili ai ticket: `grilling` per le decisioni aperte, `ponytail` per la
+  modifica minima. Le skill `domain-modeling` e `research` citate da wayfinder NON
+  esistono in questo ambiente: la prima e' sostituita da `grilling`, la seconda dal
+  subagent `general`.
+- Preferenza: procedere dalle voci piccole alle pesanti.
+- La mappa non esegue codice (scelta di charting).
+- Le decisioni gia' prese in fase di charting sono scritte nel corpo del ticket.
+
+
+================================================================================
+3. DECISIONI CHIUSE
+================================================================================
+
+--------------------------------------------------------------------------------
+#2 — Cartelle sessione in YY-MM-DD  [ticket CHIUSO, tipo: task]
+--------------------------------------------------------------------------------
+
+Decisione (gist): formato `YY-MM-DD` (ora locale) con suffisso `_n` su collisione.
+
+Dettaglio / piano di implementazione:
+- Formato: `YY-MM-DD` (ora locale), suffisso `_2`, `_3`... in caso di collisione
+  nello stesso giorno.
+- Da toccare in implementazione: `session_directory_name` (`src/storage.rs:283`),
+  il test `is_session_directory_name` (`src/storage.rs:487`, oggi assume 19 byte),
+  `sessions/README.md` e `PROJECT_CONTEXT.md` se cita il formato.
+- Nessun impatto su discovery/identita': l'identita' e' l'UUID in
+  `current-session.json`.
+- Nota accettata: l'ordinamento alfabetico non e' piu' cronologico entro la stessa
+  giornata.
+- Spec confermata, nessuna decisione residua. Nessun codice scritto nel ticket.
+
+
+--------------------------------------------------------------------------------
+#3 — `q` annulla la selezione del modello  [ticket CHIUSO, tipo: task]
+--------------------------------------------------------------------------------
+
+Decisione (gist): `q`/`Q` annulla ed esce con codice 0. Oggi `q` cade nel ramo
+default (seleziona `small` in silenzio); e non puo' essere un `None` del picker
+(che oggi significa "default -> small"), quindi serve un terzo esito gestito in
+`start` e in `transcribe`.
+
+Dettaglio / piano di implementazione:
+- Comportamento deciso: nel picker interattivo `q` (anche `Q`) annulla la scelta,
+  stampa `selezione annullata` ed esce con codice 0.
+- Fatti verificati sul codice (correggono/estendono il ticket):
+  - Oggi `q` NON e' gestito: `parse_menu_selection` (`src/cli.rs:373`) lo fa cadere
+    nel ramo `_ => MenuChoice::Default` (`src/cli.rs:383`), quindi al momento `q`
+    seleziona in silenzio `small`. La feature cambia un comportamento esistente.
+  - Serve una terza variante in `MenuChoice` (`src/cli.rs:364`) oltre a
+    `Default`/`Select`/`Custom`, con il match su `q` accanto a quello su `p`
+    (`eq_ignore_ascii_case`, `src/cli.rs:378`) per accettare `q`/`Q`.
+  - Conseguenza non nel ticket: `select_model_interactively` (`src/cli.rs:446`)
+    ritorna `Option<PathBuf>`, dove `None` oggi significa gia' "nessun modello scelto
+    -> `small`". Entrambi i call site fanno
+    `resolve_model_path(...).or_else(select_model_interactively).unwrap_or_else(|| ModelPreset::Small.default_path())`
+    (`start` a `src/cli.rs:239`, `transcribe` a `src/cli.rs:259`). Un annullamento
+    NON puo' essere un `None`, o ricadrebbe su `small`: serve distinguere
+    l'annullamento dal default, gestito in ENTRAMBI i call site restituendo `Ok(())`.
+  - Exit 0 e' coerente: `cli::execute` ritorna `Result<()>` e `main`
+    (`src/main.rs:8-11`) esce `1` solo su `Err`; l'annullamento e' quindi `Ok(())`.
+  - Il picker parte solo su terminale interattivo (`src/cli.rs:447`), quindi in
+    script/CI il percorso `q` e' irraggiungibile: nessun impatto sui non interattivi.
+- Da toccare in implementazione:
+  - `src/cli.rs`: variante di annullamento in `MenuChoice` (`:364`), ramo `q`/`Q` in
+    `parse_menu_selection` (`:373`), ritorno e match in `select_model_interactively`
+    (`:446`), prompt del menu (`:440`) aggiornato per citare `q`, call site di `start`
+    (`:239`) e `transcribe` (`:259`).
+  - Test: nuovo caso in `menu_selection_parsing` (`src/cli.rs:580`, es.
+    `parse_menu_selection("q", 4)` -> variante di annullamento) e verifica che
+    l'annullamento non ricada nel default.
+  - `docs/COMMANDS_HELP.md`: documenta il menu ma NON elenca i tasti (`:46-48`);
+    basta aggiungere `q = annulla` se si vogliono elencare le opzioni. Minimo/opzionale.
+  - Nessuna modifica a `PROJECT_CONTEXT.md` ne' a `sessions/README.md`: non
+    descrivono i tasti del menu.
+- Spec confermata e resa implementabile; nessuna decisione residua.
+
+
+--------------------------------------------------------------------------------
+#4 — `transcribe` scrive solo `.txt`  [ticket CHIUSO, tipo: task]
+--------------------------------------------------------------------------------
+
+Decisione (gist): rimosso il `.md` da `transcribe` (resta `<stem>.txt` accanto
+all'input). `render_markdown` resta perche' lo usa `export`.
+
+Dettaglio / piano di implementazione:
+- Comportamento deciso: `transcribe` produce SOLO `<stem>.txt` accanto all'input;
+  niente `<stem>.md`. Il Markdown resta ottenibile solo via
+  `export --format markdown` (default) sulle sessioni, che `transcribe` non crea.
+- `render_markdown` RESTA: e' API pubblica di `src/export.rs` (`:163`) usata da
+  `export` (`src/export.rs:137`). Non va toccata.
+- Fatti verificati sul codice:
+  - `src/transcribe.rs`: import `render_markdown` (`:7`), doc del modulo (`:21-22`),
+    `md_path` (`:30`), il controllo di collisione su `[txt, md]` (`:31-35`), la
+    scrittura (`:55`) e la stampa (`:57`).
+  - Knock-on non nel ticket: togliendo `render_markdown`, il binding `title`
+    (`src/transcribe.rs:49-53`) resta inutilizzato -> va rimosso (dead code).
+    `use std::ffi::OsStr` (`:1`) resta: serve ancora in `AudioInput::open` (`:113`).
+  - `src/cli.rs:47` (help del comando): "to `<stem>.txt` and `<stem>.md`" -> solo `.txt`.
+  - Correzione al ticket: in `docs/COMMANDS_HELP.md` il `.md` di `transcribe` e' a
+    `:137`, NON a `:221`. La riga `:221` e' la sezione `export`, che produce davvero
+    `.txt`/`.md`: NON va toccata. Anche `:227` (`--format`) resta.
+  - Aggiunte non nel ticket: `docs/RELAZIONE.md:70` descrive i "due file `.txt` e
+    `.md`" -> aggiornare. `PIANO_DOCUMENTAZIONE.md:34-36` prescrive per il futuro
+    README "i due file ... il `.txt` e il `.md`" -> correggere, altrimenti nasce gia'
+    sbagliato.
+  - `PROJECT_CONTEXT.md:97` e' l'unico punto da cambiare (`.txt` e `.md`); `:103` e'
+    sugli export, resta.
+  - `CHANGELOG.md`: la voce e' ancora sotto `## [Unreleased]` (`:12-14`): si corregge
+    la voce esistente ("produce `<nome>.txt`"), non si aggiunge una voce nuova (la
+    feature non e' ancora rilasciata).
+- Test:
+  - Nessun test d'integrazione asserisce il `.md` di `transcribe`
+    (`tests/export_formats.rs:23` e' il Markdown di `export`, invariato).
+    `src/transcribe.rs:217` verifica solo il rifiuto su `.txt` e continua a valere.
+  - In implementazione vale la pena un test che `transcribe` scriva `.txt` e NON crei
+    `<stem>.md`; non e' un requisito decisionale, solo copertura.
+- Nota di raccordo: questo ticket lascia il `.txt` accanto all'input. Il ticket
+  "transcribe crea una cartella in sessions/" (#5, che dipende da questo) spostera'
+  output e controllo di collisione in `sessions/`: non conviene investire nella
+  posizione "accanto all'input". Il commento falso "decoded concurrently with
+  inference" (`src/transcribe.rs:22-23`) e' sulla stessa riga che si tocca qui:
+  correggerlo e' un drive-by di una riga, opzionale.
+- Spec confermata e resa implementabile; nessuna decisione residua.
+
+
+--------------------------------------------------------------------------------
+#5 — `transcribe` crea una cartella in `sessions/`  [ticket CHIUSO, tipo: grilling]
+--------------------------------------------------------------------------------
+
+Decisione (gist): layout `sessions/<YY-MM-DD>[_n]/<stem>.txt`, una cartella per
+esecuzione (riusa l'allocatore di nome di `start`), data di esecuzione, cartella
+inerte (solo `.txt`). Nuovo flag `--sessions-dir`. SUPERATO il posizionamento
+"accanto all'input" di #4.
+
+Dettaglio / piano di implementazione:
+- Cartella per ESECUZIONE, non per giorno: riusa lo stesso allocatore di `start`
+  (`create_session_directory`, `src/storage.rs:301`), quindi nome `YY-MM-DD` (formato
+  deciso dal ticket #2) con suffisso `_2`, `_3`... su collisione. Una cartella = un `.txt`.
+- Data di esecuzione (istante di avvio del comando), non la data del file di input.
+- Cartella inerte: dentro solo `<stem>.txt`. Nessun `session.json`,
+  `current-session.json`, UUID, `audio/` o `transcript.jsonl`. Nessun comando la
+  scopre (`status`/`control` leggono solo `current-session.json`, `export` riceve un
+  percorso esplicito).
+- Nuovo flag `--sessions-dir` (default `sessions`), come `start`; va corretto il
+  commento di `SessionsDirArgs` (`src/cli.rs:30-31`) che oggi esclude `transcribe`.
+- Niente controllo `Error::OutputExists`: con una cartella nuova per run il percorso
+  di output non puo' preesistere; la garanzia "non sovrascrive" e la relativa frase
+  nei documenti decadono.
+- Niente cartella zombi su fallimento: si cattura il timestamp all'inizio (il nome
+  resta la data di avvio) ma la cartella viene creata, e il `.txt` scritto, solo a
+  trascrizione riuscita. A fallimento non resta nulla.
+- Output a console: si stampa il percorso completo del `.txt` prodotto.
+- Da toccare in implementazione:
+  - `src/transcribe.rs`: `TranscribeOptions` guadagna `sessions_dir`; `run` calcola
+    `sessions/<nome>/<stem>.txt` invece di `options.input.with_extension("txt")`; via
+    il controllo `OutputExists` (`:31-35`); creazione cartella + scrittura solo a fine
+    `collect_lines`; stampa del percorso completo.
+  - Esporre l'allocatore di nome: `create_session_directory` (`src/storage.rs:301`) e'
+    privato; renderlo `pub(crate)` o estrarre un helper condiviso cosi' `start` e
+    `transcribe` non divergono. Aggiungere `create_dir_all(sessions_dir)` e la
+    validazione della directory come fa `start` (`validate_directory_target`,
+    `src/session.rs:239`).
+  - `src/cli.rs`: `TranscribeArgs` (`:111`) guadagna
+    `#[command(flatten)] sessions: SessionsDirArgs`; correggere il commento `:30-31`;
+    help del comando (`:47`).
+  - Test: caso d'integrazione che lancia `run` con `sessions_dir` temporanea e verifica
+    che nasca `sessions/<nome>/<stem>.txt` e nient'altro; che a fallimento non resti la
+    cartella; aggiornare `existing_outputs_are_not_overwritten` (`src/transcribe.rs:217`),
+    che oggi si basa sul rifiuto rimosso.
+  - Documenti: `PROJECT_CONTEXT.md:93-101` (il contratto "non crea una sessione" va
+    riscritto), `docs/COMMANDS_HELP.md:137` (sezione `transcribe`: dove scrive e via
+    "rifiuta di sovrascrivere"), `sessions/README.md` (oggi dice che solo `start` crea
+    una cartella: aggiungere il caso `transcribe` e il suo layout), `docs/RELAZIONE.md:70`,
+    `PIANO_DOCUMENTAZIONE.md:34-36` (README "Everyday use": non "accanto all'input", e
+    non "non nasce nessuna sessione"), e la voce `[Unreleased]` del `CHANGELOG.md`.
+- Nota di raccordo: il `.md` resta rimosso.
+
+
+--------------------------------------------------------------------------------
+#6 — Barra di avanzamento per `transcribe`  [CHIUSO, tipo: prototype]
+--------------------------------------------------------------------------------
+
+Decisione (confermata dall'umano): barra di avanzamento in PERCENTUALE sul tempo
+gia' trascritto. Mai il tempo rimanente, e mai l'avanzamento del decode: il decode
+corre avanti e l'ASR e' il collo di bottiglia (#9), quindi una barra sul decode
+starebbe a 100% per quasi tutta la durata.
+
+- Numeratore: fine dell'ultimo segmento passato all'ASR. Denominatore: durata
+  totale dell'audio.
+- "Durata ignota non deve capitare": verificato su symphonia 0.5.4 che `n_frames`
+  c'e' sempre per wav, mp4/m4a, mp3 (anche senza header Xing, come stima CBR) e AAC.
+  Resta comunque un fallback "durata ignota" se il container non lo dichiara, invece
+  di un panic.
+- Una sola riga su stdout ridisegnata con `\r`; nessuna dipendenza nuova (`indicatif`
+  non e' in `Cargo.toml`). Compare solo se stdout e' un TTY.
+- Log whisper.cpp/ggml: gia' su stderr, ora nascosti dietro `-v` instradandoli sul
+  logging del transcriber (feature `tracing_backend` di whisper-rs +
+  `install_logging_hooks`). ATTENZIONE: l'hook e' globale, vale anche per `start`.
+- La riga della barra viene cancellata prima di stampare il percorso del `.txt`.
+
+Fatto: `src/transcribe.rs` (`ProgressBar`, `progress_line`, `percent_of`, `mmss`),
+`src/audio.rs` (`total_duration_us` dalla traccia), `src/logging.rs` + `Cargo.toml`
+(hook dei log). 4 test nuovi. Verifica in un pty su un mp3 di 51 s:
+`[##########----------]  51%  00:26 / 00:51`, arriva a 100%, riga cancellata prima
+del percorso; con stdout non-terminale nessun output.
+
+
+--------------------------------------------------------------------------------
+#7 — SHA-256 dei modelli: serve?  [ticket CHIUSO, tipo: research]
+--------------------------------------------------------------------------------
+
+Decisione (gist): solo provenienza, mai confrontato a runtime; costo = una lettura
+completa in piu' a cache fredda. Declassato: non blocca piu' `start`, `doctor` resta
+severo.
+
+Dettaglio / piano di implementazione:
+- Il campo `model_sha256` e' SOLO scritto: nessuno lo confronta a runtime. L'unico
+  confronto con la tabella documentata e' in `doctor` (`src/diagnostics.rs:256-303`).
+  `export` e `transcribe` non lo leggono.
+- `start` calcola e memorizza l'hash ma non lo verifica mai; il `?` in
+  `src/session.rs:203` fa fallire l'intera sessione se l'hash fallisce (anche solo un
+  errore di lettura transitorio).
+- Costo: su cache fredda e' una lettura + SHA completa IN PIU' rispetto a
+  `WhisperEngine::load` (~0.5 s per 190 MB, ~3 s per 1.1 GB); su cache calda e'
+  trascurabile (stat + sidecar JSON).
+- DECISIONE (confermata): declassare. Rendere `model_identity` best-effort in
+  `src/session.rs:203` (fallback con `sha256` vuoto / identita' senza hash) cosi' non
+  puo' piu' bloccare `start`; `doctor` resta severo. Nessun bump di schema:
+  `model_sha256` resta `String` (eventualmente `""`), `SessionConfig.model` e' gia'
+  `Option`.
+- Rischio noto (preesistente, non introdotto qui): la cache sidecar e' chiavata su
+  size+mtime, quindi un modello scambiato in place con stessa dimensione e mtime
+  conservato restituirebbe un hash vecchio.
+
+
+--------------------------------------------------------------------------------
+#9 — Tempo di attesa di `transcribe` su file  [ticket CHIUSO, tipo: research]
+--------------------------------------------------------------------------------
+
+Decisione (gist): il decode non e' il collo di bottiglia, l'ASR si' (una `full()` per
+segmento su finestra fissa di 30 s). Ottimizzazioni ordinate; la scelta e' il ticket
+figlio #10.
+
+Dettaglio:
+- `collect_lines` (`src/transcribe.rs:63`) e' SEQUENZIALE: decodifica, segmentazione e
+  ASR sullo stesso thread. Il commento "decoded concurrently with inference"
+  (`src/transcribe.rs:20-23`) e' falso per `transcribe`.
+- Il decode NON e' il collo di bottiglia (pochi secondi); domina l'ASR.
+- `full()` e' chiamato UNA VOLTA PER SEGMENTO VAD (`src/asr.rs:277`) e whisper.cpp gira
+  sempre l'encoder su una finestra fissa di 30 s: i segmenti corti pagano una passata
+  intera. Per 30 minuti: ~60 chiamate (parlato continuo) fino a ~180-350 (botta e
+  risposta).
+- Ottimizzazioni ordinate: (1) batch dei segmenti corti, (2) `BeamSearch`->`Greedy`
+  (~5x decoder), (3) riuso dello state whisper, (4) alzare `min_speech_ms`, (5) `threads`,
+  (6) pipelining decode/ASR, (7) streaming WAV (memoria, non latenza), (8) CoreML.
+- Misurabile: modelli in `models/`, fixture 12.5 s e baseline RTF in `benchmarks/`; ma
+  il benchmark bypassa il segmentatore, quindi l'effetto del batching va misurato con un
+  WAV sintetico lungo.
+- La scelta di quale ottimizzazione adottare e' graduata nel ticket figlio dedicato (#10).
+
+
+================================================================================
+4. TICKET APERTI (non ancora decisi)
+================================================================================
+
+--------------------------------------------------------------------------------
+#8 — Intervallo di polling dei comandi (oggi 5 ms)  [APERTO, tipo: grilling]
+--------------------------------------------------------------------------------
+
+`CONTROL_POLL_INTERVAL` e' 5 ms (`src/session.rs:29`) e il loop principale lo usa per
+leggere `control.json`. Va dilatato?
+
+Da decidere: valore nuovo (es. 50-100 ms), impatto sulla reattivita' di
+`pause`/`resume`/`stop` e sulla latenza del loop di ingest: lo stesso loop fa anche
+`recv_timeout` sui chunk audio, quindi allungare l'intervallo puo' aggiungere ritardo
+allo smaltimento della coda.
+
+
+--------------------------------------------------------------------------------
+#10 — Quale ottimizzazione adottare per transcribe  [APERTO, tipo: grilling]
+--------------------------------------------------------------------------------
+
+Dalla ricerca su `transcribe` (ticket #9) esce una lista ordinata di ottimizzazioni:
+quale adottare?
+
+Candidati (dal report, in ordine di beneficio stimato):
+1. Batch dei segmenti corti in un'unica `full()` — beneficio alto, rischio medio:
+   cambia i confini/timestamp del testo, da validare con WER su una fixture reale.
+2. `BeamSearch` -> `Greedy` come default — ~5x decoder, rischio basso-medio sulla qualita'.
+3. Riuso dello state whisper tra i segmenti invece di `create_state()` per chiamata
+   (`src/asr.rs:273`).
+4. Alzare `min_speech_ms` per non pagare finestre intere su blip <0.5 s (rischio:
+   tagliare parole brevi reali).
+5. Esporre/tarare `threads` (oggi capped a 8).
+6. Pipelining decode+ASR (e correggere il commento falso in `src/transcribe.rs:20-23`).
+7. Streaming WAV (memoria, non latenza).
+8. CoreML.
+
+Da decidere: quali entrano, in quale ordine, e se serve prima una misura su un WAV
+sintetico lungo — il report nota che l'effetto del batching non e' ancora misurato.
+
+
+================================================================================
+5. FOG — "Not yet specified"
+================================================================================
+
+Vuota: l'unica voce ("cosa mostrare quando la durata totale e' ignota") e' stata
+risolta dal ticket #6 con un fallback "durata ignota".
+
+
+================================================================================
+6. OUT OF SCOPE
+================================================================================
+
+- Ri-trascrizione finale da `mixed.wav` a sessione conclusa: valutata e scartata per
+  ora (troppo lenta). Si resta sulla trascrizione live.
+
+
+================================================================================
+7. STATO DEL CODICE (al 2026-10-11)
+================================================================================
+
+Cinque decisioni di questa map sono GIA' state scritte in codice, ma NON committate
+(working tree su `main`, nessun branch, nessun commit):
+
+- #2 cartelle `YY-MM-DD`      -> `src/storage.rs` (+ test, + doc)
+- #3 `q` annulla              -> `src/cli.rs` (+ test, + `docs/COMMANDS_HELP.md`)
+- #4 `transcribe` senza `.md` -> `src/transcribe.rs` (+ test, + doc) [fuso con #5]
+- #5 `transcribe` in cartella -> `src/transcribe.rs`, `src/cli.rs`, `src/storage.rs` (+ test, + doc)
+- #6 barra di avanzamento     -> `src/transcribe.rs`, `src/audio.rs` (+ test, + doc)
+- #7 SHA-256 best-effort      -> `src/session.rs` (+ test)
+
+`cargo fmt`, `cargo clippy --all-targets` e `cargo test` (85 test) passano.
+Verifica end-to-end con `models/ggml-small-q5_1.bin`: primo run
+`sessions/26-10-11/fixture.txt`, secondo `sessions/26-10-11_2/fixture.txt`, dentro
+solo il `.txt`; a fallimento nessuna cartella creata. Barra verificata su un mp3 di
+51 s in un pty: `[##########----------]  51%  00:26 / 00:51`, arriva a 100%, riga
+cancellata prima del percorso finale; con stdout non-terminale nessun output.
+#8, #10 NON hanno codice (decisione ancora aperta).
+
+Altri file modificati/non tracciati nello stesso tree:
+- modificati: CHANGELOG.md, PIANO_DOCUMENTAZIONE.md, PROJECT_CONTEXT.md, README.md,
+  docs/RELAZIONE.md, sessions/README.md, TODO.txt (questo file)
+- non tracciati: AGENTS.md, docs/agents/, .agents/, skills-lock.json
+
+
+================================================================================
+8. APPENDICE — note originali pre-map
+================================================================================
+
+Queste erano le voci grezze da cui e' nata la map. Sono qui solo per non perderle;
+la versione ragionata e' nelle sezioni 3 e 4.
+
+- il nuovo nome delle cartelle di sessioni deve diventare YY-MM-DD
+- voglio che anche per transcribe, venga creata una cartella in /sessions, nella quale
+  viene creato il file .txt e basta,
+- quando transcribe viene completato, ho intenzione di eliminare la produzione del file
+  .md e lasciare solo quella del .txt
+- durante la selezione del modello, dopo start, voglio che con 'q' si possa quittare la
+  scelta ed interrompere start
+- MIGLIORARE TEMPO DI ATTESA DELLA TRASCRIZIONE DA file
+- durante la sessione di transcript serve una barra di completamento per capire a che
+  punto siamo. importante che la barra venga lockata a schermo e che non vengano scriti
+  tutti i metadati in continuazione, come succede attualmente.
+- valutare se dilatare il tempo di controllo di comandi dal secondo cli a sessione in
+  corso: attualmente ogni 5ms
+- VALUTARE SE LA TRASCRIZIONE FINALE SIA MEGLIO FARLA SUL FILE mixed.wav una volta
+  completo. POTREBBE AIUTARE A MIGLIORARE LA QUALITÀ DI OUTPUT ma sicuramente
+  aumenterebbe i tempi di attesa dovendo aspettare a fine riunione che il file venga
+  generato
+- CAPIRE SE OCCORRE AVERE UNO SHA256 PER I MODELLI, NON NE TROVO UNA CONCRETA UTILITÀ

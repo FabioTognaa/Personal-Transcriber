@@ -45,7 +45,8 @@ opzioni **VAD** e di **inferenza** valgono per `start` e `transcribe`.
 
 Se non si passa né `--model` né `--model-preset` e si lancia `start` da un
 terminale interattivo, compare un menu dei modelli; senza terminale (script, CI,
-test) il menu non compare e vale `small`.
+test) il menu non compare e vale `small`. Dal menu, `q` annulla la scelta e non
+avvia nulla.
 
 Preset e file documentati:
 
@@ -114,19 +115,19 @@ verificati e il report contiene un avviso.
 personal-transcriber start [opzioni]
 ```
 
-| Opzione                        | Tipo         | Default            | Descrizione                                                        |
-| ------------------------------ | ------------ | ------------------ | ------------------------------------------------------------------ |
-| `--microphone <NOME>`          | testo        | input predefinito  | Dispositivo del microfono.         |
-| `--system-audio <NOME>`        | testo        | BlackHole rilevato | Dispositivo dell'audio di sistema. |
-| `--model <PERCORSO>`           | percorso     | —                  | Vedi “Modello e lingua”.                                           |
-| `--model-preset <NOME>`        | enum         | `small`            | Vedi “Modello e lingua”.                                           |
-| `--language <LINGUA>`          | `it` \| `en` | `it`               | Vedi “Modello e lingua”.                                           |
-| `--asr-prompt <TESTO>`         | testo        | predefinito lingua | Vedi “Modello e lingua”.                                           |
-| `--vad-threshold <NUMERO>`     | decimale     | `0.02`             | Vedi “Segmentazione vocale”.                                       |
-| `--vad-start-ms <MS>`          | intero       | `60`               | Vedi “Segmentazione vocale”.                                       |
-| `--vad-end-ms <MS>`            | intero       | `800`              | Vedi “Segmentazione vocale”.                                       |
-| `--asr-flash-attention <BOOL>` | booleano     | `true`             | Vedi “Inferenza”.                                                  |
-| `--sessions-dir <PERCORSO>`    | percorso     | `sessions`         | Directory in cui creare la sessione.                               |
+| Opzione                        | Tipo         | Default            | Descrizione                          |
+| ------------------------------ | ------------ | ------------------ | ------------------------------------ |
+| `--microphone <NOME>`          | testo        | input predefinito  | Dispositivo del microfono.           |
+| `--system-audio <NOME>`        | testo        | BlackHole rilevato | Dispositivo dell'audio di sistema.   |
+| `--model <PERCORSO>`           | percorso     | —                  | Vedi “Modello e lingua”.             |
+| `--model-preset <NOME>`        | enum         | `small`            | Vedi “Modello e lingua”.             |
+| `--language <LINGUA>`          | `it` \| `en` | `it`               | Vedi “Modello e lingua”.             |
+| `--asr-prompt <TESTO>`         | testo        | predefinito lingua | Vedi “Modello e lingua”.             |
+| `--vad-threshold <NUMERO>`     | decimale     | `0.02`             | Vedi “Segmentazione vocale”.         |
+| `--vad-start-ms <MS>`          | intero       | `60`               | Vedi “Segmentazione vocale”.         |
+| `--vad-end-ms <MS>`            | intero       | `800`              | Vedi “Segmentazione vocale”.         |
+| `--asr-flash-attention <BOOL>` | booleano     | `true`             | Vedi “Inferenza”.                    |
+| `--sessions-dir <PERCORSO>`    | percorso     | `sessions`         | Directory in cui creare la sessione. |
 
 ### `transcribe`
 
@@ -134,10 +135,16 @@ personal-transcriber start [opzioni]
 personal-transcriber transcribe <FILE> [opzioni]
 ```
 
-Trascrive un file audio esistente in `<nome>.txt` e `<nome>.md` accanto
-all'input, senza creare una sessione e senza salvare audio. Se uno dei due file
-di output esiste già, il comando si ferma senza sovrascriverlo. Elabora un solo
-file per invocazione, in un unico thread.
+Trascrive un file audio esistente, senza registrare e senza conservare audio: in
+`sessions/` nasce una cartella nuova (stesso nome `YY-MM-DD` di `start`) con dentro
+solo `<nome>.txt`. Non sovrascrive mai nulla, perché la cartella è nuova; se la
+trascrizione fallisce non resta niente sul disco. Elabora un solo file per
+invocazione, in un unico thread.
+
+Su un terminale mostra una barra di avanzamento su una riga sola: la percentuale
+già trascritta sul totale, non il tempo rimanente. Con l'output rediretto non
+stampa nulla. I log di whisper.cpp/ggml vanno su standard error e compaiono solo
+con `-v`.
 
 | Argomento/Opzione              | Tipo         | Default            | Descrizione                                    |
 | ------------------------------ | ------------ | ------------------ | ---------------------------------------------- |
@@ -150,10 +157,15 @@ file per invocazione, in un unico thread.
 | `--vad-start-ms <MS>`          | intero       | `60`               | Vedi “Segmentazione vocale”.                   |
 | `--vad-end-ms <MS>`            | intero       | `800`              | Vedi “Segmentazione vocale”.                   |
 | `--asr-flash-attention <BOOL>` | booleano     | `true`             | Vedi “Inferenza”.                              |
+| `--sessions-dir <PERCORSO>`    | percorso     | `sessions`         | Directory in cui creare la cartella di output. |
 
 I WAV passano dal lettore in memoria, quindi ereditano il limite di 64 MiB e 30
 minuti; gli altri formati sono decodificati in streaming e non hanno tale
 limite.
+
+## Comandi per una sessione in atto
+
+Di seguito sono riporati i comandi da poter eseguire per monitorare e gestire la sessione di transcrizione attuale. Occorre che venga lanciato un secondo terminale in parallelo con quello della sessione corrente in atto.
 
 ### `status`
 
@@ -176,7 +188,7 @@ personal-transcriber pause [opzioni]
 ```
 
 Sospende la trascrizione lasciando attiva la registrazione. Chiude il segmento
-aperto e non attraversa l'intervallo sospeso.
+aperto e non attraversa l'intervallo sospeso. In questo modo la trascrizione subisce un taglio fino al lancio di un eventuale `resume`.
 
 | Opzione                     | Tipo     | Default    | Descrizione                                  |
 | --------------------------- | -------- | ---------- | -------------------------------------------- |
@@ -200,7 +212,7 @@ Riprende la trascrizione dopo una `pause`.
 personal-transcriber stop [opzioni]
 ```
 
-Finalizza la sessione attiva. Attende il completamento. Su una sessione già
+Finalizza la sessione attiva, questo è il comando che deve essere lanciato per chiudere la registrazione e completare la crezione della cartella di sessione. Attende il completamento. Su una sessione già
 `completed` restituisce lo stato senza rifare il lavoro; su una `failed` i
 comandi di controllo sono rifiutati.
 
@@ -214,7 +226,7 @@ comandi di controllo sono rifiutati.
 personal-transcriber export <SESSIONE> [opzioni]
 ```
 
-Rilegge `transcript.jsonl` e rende lo stesso testo in un altro formato, senza
+Rilegge il file `transcript.jsonl` di una sessione e restituisce il testo in formato .txt e .md su console, senza
 modificarlo. Rifiuta come destinazione qualsiasi file canonico della sessione.
 
 | Argomento/Opzione           | Tipo     | Default         | Descrizione                                                                 |
@@ -224,14 +236,14 @@ modificarlo. Rifiuta come destinazione qualsiasi file canonico della sessione.
 | `-o`, `--output <PERCORSO>` | percorso | standard output | File di destinazione. La scrittura è atomica.                               |
 | `--allow-partial`           | flag     | spento          | Consente l'export di una sessione non completata (fallita o ancora attiva). |
 
-## Esempi rapidi
+## Esempio di una pipeline di utilizzo
 
 ```sh
 personal-transcriber devices
 personal-transcriber doctor --probe-audio
 personal-transcriber start --language it
 personal-transcriber start --model-preset large-v3-turbo --language it
-personal-transcriber transcribe riunione.mp3 --language it
+personal-transcriber transcribe riunione.mp3 --language @it
 personal-transcriber status
 personal-transcriber pause
 personal-transcriber resume

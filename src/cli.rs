@@ -27,8 +27,8 @@ pub struct Cli {
 }
 
 /// Directory holding session directories. Only the commands that create or
-/// address a session expose it, so `devices` and `transcribe` do not advertise a
-/// flag they would ignore.
+/// address a session expose it, so `devices` does not advertise a flag it would
+/// ignore.
 #[derive(Debug, Args)]
 pub struct SessionsDirArgs {
     /// Directory under which session directories are created.
@@ -44,7 +44,7 @@ pub enum Command {
     Doctor(DoctorArgs),
     /// Start a local recording and transcription session.
     Start(StartArgs),
-    /// Transcribe an existing audio file to `<stem>.txt` and `<stem>.md`.
+    /// Transcribe an existing audio file into a new directory under `sessions/`.
     Transcribe(TranscribeArgs),
     /// Show the current session state and backlog.
     Status(SessionsDirArgs),
@@ -120,6 +120,9 @@ pub struct TranscribeArgs {
 
     #[command(flatten)]
     pub inference: InferenceArgs,
+
+    #[command(flatten)]
+    pub sessions: SessionsDirArgs,
 }
 
 /// Model selection and language, shared by `start` and `transcribe`.
@@ -235,9 +238,9 @@ pub fn execute(command: Command) -> Result<()> {
             }
         }
         Command::Start(args) => {
-            let model = resolve_model_path(args.model.model, args.model.model_preset)
-                .or_else(select_model_interactively)
-                .unwrap_or_else(|| ModelPreset::Small.default_path());
+            let Some(model) = resolve_model(args.model.model, args.model.model_preset)? else {
+                return Ok(());
+            };
             let language = args.model.language;
             let prompt = resolve_initial_prompt(args.model.asr_prompt, &language);
             let root = crate::session::run(StartOptions {
@@ -255,14 +258,15 @@ pub fn execute(command: Command) -> Result<()> {
             Ok(())
         }
         Command::Transcribe(args) => {
-            let model = resolve_model_path(args.model.model, args.model.model_preset)
-                .or_else(select_model_interactively)
-                .unwrap_or_else(|| ModelPreset::Small.default_path());
+            let Some(model) = resolve_model(args.model.model, args.model.model_preset)? else {
+                return Ok(());
+            };
             let language = args.model.language;
             let prompt = resolve_initial_prompt(args.model.asr_prompt, &language);
             crate::transcribe::run(crate::transcribe::TranscribeOptions {
                 input: args.input,
                 model,
+                sessions_dir: args.sessions.sessions_dir,
                 language,
                 segmenter: segmenter_config(&args.vad),
                 inference: inference_config(&args.inference, prompt),
@@ -366,10 +370,11 @@ enum MenuChoice {
     Default,
     Select(usize),
     Custom,
+    Cancel,
 }
 
 /// Parse a menu answer: empty is the default, a valid number selects an option,
-/// `p` asks for a custom path. Anything else falls back to the default.
+/// `p` asks for a custom path, `q` cancels. Anything else falls back to the default.
 fn parse_menu_selection(input: &str, option_count: usize) -> MenuChoice {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -377,6 +382,9 @@ fn parse_menu_selection(input: &str, option_count: usize) -> MenuChoice {
     }
     if trimmed.eq_ignore_ascii_case("p") {
         return MenuChoice::Custom;
+    }
+    if trimmed.eq_ignore_ascii_case("q") {
+        return MenuChoice::Cancel;
     }
     match trimmed.parse::<usize>() {
         Ok(number) if (1..=option_count).contains(&number) => MenuChoice::Select(number - 1),
@@ -437,40 +445,71 @@ fn print_model_menu(options: &[ModelOption]) {
             option.path.display()
         );
     }
-    print!("Invio = default (small), numero = scegli, p = percorso personalizzato: ");
+    print!("Invio = default (small), numero = scegli, p = percorso personalizzato, q = annulla: ");
     let _ = std::io::stdout().flush();
 }
 
+/// Outcome of the interactive picker: a model to use, or the user cancelled.
+enum ModelPick {
+    Use(PathBuf),
+    Cancelled,
+}
+
+fn small_model() -> ModelPick {
+    ModelPick::Use(ModelPreset::Small.default_path())
+}
+
 /// Interactive model picker. Shown only on an interactive terminal and only when
-/// no model flag was given. Returns `None` to fall back to the `small` preset.
-fn select_model_interactively() -> Option<PathBuf> {
+/// no model flag was given. Returns the `small` preset on an empty answer.
+fn select_model_interactively() -> ModelPick {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        return None;
+        return small_model();
     }
     let options = model_menu_options(Path::new(crate::model::MODELS_DIR));
     print_model_menu(&options);
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_err() {
-        return None;
+        return small_model();
     }
     match parse_menu_selection(&input, options.len()) {
-        MenuChoice::Default => None,
-        MenuChoice::Select(index) => options.get(index).map(|option| option.path.clone()),
+        MenuChoice::Default => small_model(),
+        MenuChoice::Select(index) => ModelPick::Use(
+            options
+                .get(index)
+                .map(|option| option.path.clone())
+                .unwrap_or_else(|| ModelPreset::Small.default_path()),
+        ),
         MenuChoice::Custom => {
             print!("Percorso del modello (.bin): ");
             let _ = std::io::stdout().flush();
             let mut path = String::new();
             if std::io::stdin().read_line(&mut path).is_err() {
-                return None;
+                return small_model();
             }
             let path = path.trim();
             if path.is_empty() {
-                None
+                small_model()
             } else {
-                Some(PathBuf::from(path))
+                ModelPick::Use(PathBuf::from(path))
             }
         }
+        MenuChoice::Cancel => {
+            println!("selezione annullata");
+            ModelPick::Cancelled
+        }
     }
+}
+
+/// Resolve the ASR model: the `--model` flag or preset, otherwise the interactive
+/// picker. `Ok(None)` means the user cancelled the picker; the command exits cleanly.
+fn resolve_model(model: Option<PathBuf>, preset: Option<ModelPreset>) -> Result<Option<PathBuf>> {
+    if let Some(path) = resolve_model_path(model, preset) {
+        return Ok(Some(path));
+    }
+    Ok(match select_model_interactively() {
+        ModelPick::Use(path) => Some(path),
+        ModelPick::Cancelled => None,
+    })
 }
 
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
@@ -585,6 +624,8 @@ mod tests {
         assert_eq!(parse_menu_selection("0", 4), MenuChoice::Default);
         assert_eq!(parse_menu_selection("p", 4), MenuChoice::Custom);
         assert_eq!(parse_menu_selection("abc", 4), MenuChoice::Default);
+        assert_eq!(parse_menu_selection("q", 4), MenuChoice::Cancel);
+        assert_eq!(parse_menu_selection(" Q ", 4), MenuChoice::Cancel);
     }
 
     #[test]

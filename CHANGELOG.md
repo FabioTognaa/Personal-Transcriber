@@ -10,14 +10,19 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 ### Added
 
 - Comando `transcribe <file>` per trascrivere un file esistente senza creare una
-  sessione: produce `<nome>.txt` e `<nome>.md` accanto all'input, rifiuta di
-  sovrascrivere file esistenti e non conserva audio né eventi.
+  sessione: produce solo `<nome>.txt`, in una cartella nuova sotto `--sessions-dir`
+  (stesso nome `YY-MM-DD` di `start`), e non conserva audio né eventi.
+- Barra di avanzamento per `transcribe` su terminale: una riga sola ridisegnata in
+  place, con la percentuale già trascritta sul totale (mai il tempo rimanente).
+  Niente output quando standard output non è un terminale.
 - Decodifica in streaming di MP3, M4A/MP4 (AAC) e AAC tramite `symphonia` (puro
   Rust, nessun ffmpeg richiesto), normalizzata a mono 16 kHz con memoria costante.
   La trascrizione di un file procede più velocemente del tempo reale.
 
 ### Changed
 
+- Le cartelle di sessione sono nominate con il giorno di avvio (`YY-MM-DD`) e non
+  più con data e ora; più sessioni nello stesso giorno usano i suffissi `_2`, `_3`….
 - Ridotte le opzioni di tuning: `start` e `transcribe` espongono solo soglia,
   innesco e fine del VAD (`--vad-threshold`, `--vad-start-ms`, `--vad-end-ms`) e
   `--asr-flash-attention`; thread, strategia, beam, temperatura e Core ML usano i
@@ -28,6 +33,9 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
   `session.json`.
 - `--sessions-dir` non è più globale: compare solo sui comandi che creano o
   indirizzano una sessione.
+- I log di whisper.cpp/ggml non finiscono più su standard error a prescindere: passano
+  per il logging del transcriber, quindi restano nascosti finché non si alza la
+  verbosità con `-v`. Vale per `start` e per `transcribe`.
 
 ## [0.2.0]
 

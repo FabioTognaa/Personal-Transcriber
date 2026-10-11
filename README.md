@@ -1,4 +1,4 @@
-# personal-transcriber
+#
 
 Welcome to my personal transcriber!
 
@@ -59,7 +59,7 @@ Il modello viene poi dato ad un thread worker, che a seconda del compito lo usa 
 - valida la --sessions-dir; prende il lock esclusivo sessions/.runner.lock (un solo start alla volta); recupera una sessione rimasta running da un crash precedente marcandola failed.
 - risolve la sorgente: microfono = input di default (o --microphone); sistema = BlackHole (o --system-audio); i due devono essere dispositivi diversi.
 - crea il Segmenter, controlla lo spazio disco (live: ≥ 64 MiB, ricontrollo ogni 5 s).
-- crea sessions/YYYY-MM-DD_HH-MM-SS/ (ora locale, \_2, \_3… se collide) con session.json, status.json, events.jsonl, transcript.jsonl, audio/{mixed,microphone,system}.wav.
+- crea sessions/YY-MM-DD/ (giorno locale, \_2, \_3… se collide) con session.json, status.json, events.jsonl, transcript.jsonl, audio/{mixed,microphone,system}.wav.
 - sink.start() avvia il thread worker ASR (apre transcript.jsonl).
 - scrive l'evento session_started, stato running.
 
@@ -83,7 +83,7 @@ Per quanto riguarda i formati wav, ad oggi non c'è ancora una funzione nativa c
 - `transcribe` elabora un file alla volta e in un solo thread: nel formato
   leggero non esistono pause, ripresa o stato di avanzamento.
 
-## Documentazione
+## Documentazione nel dettaglio
 
 - [Sezione aiuto per tutti i comandi](docs/COMMANDS_HELP.md)
 - [Funzionamento e architettura](docs/RELAZIONE.md)

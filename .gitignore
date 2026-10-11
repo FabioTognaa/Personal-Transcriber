@@ -5,6 +5,8 @@
 /sessions/*
 !/sessions/README.md
 /models/
+TODO.txt
+PROJECT_CONTEXT.md
 
 # Local IDE and editor files
 .DS_Store
