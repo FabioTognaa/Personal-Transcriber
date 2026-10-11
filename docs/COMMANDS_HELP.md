@@ -141,6 +141,11 @@ solo `<nome>.txt`. Non sovrascrive mai nulla, perché la cartella è nuova; se l
 trascrizione fallisce non resta niente sul disco. Elabora un solo file per
 invocazione, in un unico thread.
 
+Su un terminale mostra una barra di avanzamento su una riga sola: la percentuale
+già trascritta sul totale, non il tempo rimanente. Con l'output rediretto non
+stampa nulla. I log di whisper.cpp/ggml vanno su standard error e compaiono solo
+con `-v`.
+
 | Argomento/Opzione              | Tipo         | Default            | Descrizione                                    |
 | ------------------------------ | ------------ | ------------------ | ---------------------------------------------- |
 | `<FILE>` (argomento)           | percorso     | richiesto          | Input `.wav`, `.mp3`, `.m4a`, `.mp4` o `.aac`. |

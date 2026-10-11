@@ -193,6 +193,9 @@ pub struct CompressedAudioSource {
     chunk_frames: usize,
     emitted_samples: u64,
     eof: bool,
+    /// Total source duration when the container declares it, so callers can show
+    /// progress. `None` means the format does not say (see `total_duration_us`).
+    total_us: Option<u64>,
 }
 
 impl CompressedAudioSource {
@@ -213,6 +216,7 @@ impl CompressedAudioSource {
             .map_err(|error| Error::UnsupportedAudio(error.to_string()))?;
         let format = probed.format;
         let (track_id, decoder) = select_decoder(&*format)?;
+        let total_us = total_duration_us(&*format, track_id);
         let chunk_frames =
             (u64::from(TARGET_SAMPLE_RATE_HZ) * DEFAULT_CHUNK_DURATION_MS / 1_000) as usize;
         Ok(Self {
@@ -224,7 +228,19 @@ impl CompressedAudioSource {
             chunk_frames,
             emitted_samples: 0,
             eof: false,
+            total_us,
         })
+    }
+
+    /// Total source duration in microseconds, when the container declares it.
+    ///
+    /// ponytail: derived from the track header. For MP3 without a Xing/Info header
+    /// and for raw ADTS AAC this is an estimate (symphonia assumes CBR); a VBR file
+    /// without a header can drift by a few percent. If a container ever reports
+    /// nothing, callers fall back to an indeterminate progress line rather than
+    /// scanning the file up front.
+    pub fn total_duration_us(&self) -> Option<u64> {
+        self.total_us
     }
 
     pub fn next_chunk(&mut self) -> Result<Option<PcmChunk>> {
@@ -278,6 +294,18 @@ impl CompressedAudioSource {
             channels: TARGET_CHANNELS,
             samples,
         }
+    }
+}
+
+/// Total duration in microseconds from the track header: `n_frames` at the source
+/// sample rate. `None` when the container does not declare either.
+fn total_duration_us(reader: &dyn FormatReader, track_id: u32) -> Option<u64> {
+    let track = reader.tracks().iter().find(|track| track.id == track_id)?;
+    match (track.codec_params.n_frames, track.codec_params.sample_rate) {
+        (Some(frames), Some(rate)) if rate > 0 => {
+            Some(frames.saturating_mul(1_000_000) / u64::from(rate))
+        }
+        _ => None,
     }
 }
 

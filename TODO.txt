@@ -9,8 +9,8 @@ La map su GitHub e' stata cancellata: questo file e' ora l'unica copia.
 Indice
   1. Destination
   2. Notes (contesto operativo)
-  3. Decisioni CHIUSE (6 ticket risolti) — con il dettaglio di implementazione
-  4. Ticket APERTI (3, non ancora decisi)
+  3. Decisioni CHIUSE (7 ticket risolti) — con il dettaglio di implementazione
+  4. Ticket APERTI (2, non ancora decisi)
   5. Fog — "Not yet specified"
   6. Out of scope
   7. Stato del codice
@@ -215,6 +215,35 @@ Dettaglio / piano di implementazione:
 
 
 --------------------------------------------------------------------------------
+#6 — Barra di avanzamento per `transcribe`  [CHIUSO, tipo: prototype]
+--------------------------------------------------------------------------------
+
+Decisione (confermata dall'umano): barra di avanzamento in PERCENTUALE sul tempo
+gia' trascritto. Mai il tempo rimanente, e mai l'avanzamento del decode: il decode
+corre avanti e l'ASR e' il collo di bottiglia (#9), quindi una barra sul decode
+starebbe a 100% per quasi tutta la durata.
+
+- Numeratore: fine dell'ultimo segmento passato all'ASR. Denominatore: durata
+  totale dell'audio.
+- "Durata ignota non deve capitare": verificato su symphonia 0.5.4 che `n_frames`
+  c'e' sempre per wav, mp4/m4a, mp3 (anche senza header Xing, come stima CBR) e AAC.
+  Resta comunque un fallback "durata ignota" se il container non lo dichiara, invece
+  di un panic.
+- Una sola riga su stdout ridisegnata con `\r`; nessuna dipendenza nuova (`indicatif`
+  non e' in `Cargo.toml`). Compare solo se stdout e' un TTY.
+- Log whisper.cpp/ggml: gia' su stderr, ora nascosti dietro `-v` instradandoli sul
+  logging del transcriber (feature `tracing_backend` di whisper-rs +
+  `install_logging_hooks`). ATTENZIONE: l'hook e' globale, vale anche per `start`.
+- La riga della barra viene cancellata prima di stampare il percorso del `.txt`.
+
+Fatto: `src/transcribe.rs` (`ProgressBar`, `progress_line`, `percent_of`, `mmss`),
+`src/audio.rs` (`total_duration_us` dalla traccia), `src/logging.rs` + `Cargo.toml`
+(hook dei log). 4 test nuovi. Verifica in un pty su un mp3 di 51 s:
+`[##########----------]  51%  00:26 / 00:51`, arriva a 100%, riga cancellata prima
+del percorso; con stdout non-terminale nessun output.
+
+
+--------------------------------------------------------------------------------
 #7 — SHA-256 dei modelli: serve?  [ticket CHIUSO, tipo: research]
 --------------------------------------------------------------------------------
 
@@ -273,24 +302,6 @@ Dettaglio:
 ================================================================================
 
 --------------------------------------------------------------------------------
-#6 — Barra di avanzamento per transcribe  [APERTO, tipo: prototype]
---------------------------------------------------------------------------------
-
-Durante `transcribe` serve una barra di avanzamento, lockata a schermo (una sola riga
-ridisegnata in-place), senza il flood di metadati attuale.
-
-Ipotesi da prototipare e guardare:
-- barra percentuale basata sulla durata audio gia' processata rispetto al totale;
-- una sola riga su stdout ridisegnata con `\r`/ANSI — nessuna dipendenza nuova:
-  `indicatif` non e' in `Cargo.toml`;
-- i log di whisper.cpp/ggml su stderr (oggi sempre attivi: in `src/asr.rs` non e'
-  installato alcun log callback) nascosti di default e visibili solo con `-v`.
-
-Da decidere guardando il prototipo: cosa mostrare quando la durata totale e' ignota
-(formati compressi decodificati in streaming con symphonia).
-
-
---------------------------------------------------------------------------------
 #8 — Intervallo di polling dei comandi (oggi 5 ms)  [APERTO, tipo: grilling]
 --------------------------------------------------------------------------------
 
@@ -331,8 +342,8 @@ sintetico lungo — il report nota che l'effetto del batching non e' ancora misu
 5. FOG — "Not yet specified"
 ================================================================================
 
-- Dettagli finali della barra di avanzamento: cosa mostrare quando la durata totale e'
-  ignota (formati compressi decodificati in streaming con symphonia).
+Vuota: l'unica voce ("cosa mostrare quando la durata totale e' ignota") e' stata
+risolta dal ticket #6 con un fallback "durata ignota".
 
 
 ================================================================================
@@ -354,13 +365,16 @@ Cinque decisioni di questa map sono GIA' state scritte in codice, ma NON committ
 - #3 `q` annulla              -> `src/cli.rs` (+ test, + `docs/COMMANDS_HELP.md`)
 - #4 `transcribe` senza `.md` -> `src/transcribe.rs` (+ test, + doc) [fuso con #5]
 - #5 `transcribe` in cartella -> `src/transcribe.rs`, `src/cli.rs`, `src/storage.rs` (+ test, + doc)
+- #6 barra di avanzamento     -> `src/transcribe.rs`, `src/audio.rs` (+ test, + doc)
 - #7 SHA-256 best-effort      -> `src/session.rs` (+ test)
 
-`cargo fmt`, `cargo clippy --all-targets` e `cargo test` (82 test) passano.
+`cargo fmt`, `cargo clippy --all-targets` e `cargo test` (85 test) passano.
 Verifica end-to-end con `models/ggml-small-q5_1.bin`: primo run
 `sessions/26-10-11/fixture.txt`, secondo `sessions/26-10-11_2/fixture.txt`, dentro
-solo il `.txt`; a fallimento nessuna cartella creata.
-#6, #8, #10 NON hanno codice (decisione ancora aperta).
+solo il `.txt`; a fallimento nessuna cartella creata. Barra verificata su un mp3 di
+51 s in un pty: `[##########----------]  51%  00:26 / 00:51`, arriva a 100%, riga
+cancellata prima del percorso finale; con stdout non-terminale nessun output.
+#8, #10 NON hanno codice (decisione ancora aperta).
 
 Altri file modificati/non tracciati nello stesso tree:
 - modificati: CHANGELOG.md, PIANO_DOCUMENTAZIONE.md, PROJECT_CONTEXT.md, README.md,
