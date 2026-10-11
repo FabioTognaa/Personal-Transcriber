@@ -2,14 +2,14 @@
 
 In questa cartella finiscono tutti i dati di ogni registrazione vocale.
 
-Ogni `start` crea una cartella, che viene nominata in base al momento nel quale si avvia la registrazione, nel formato:
+Ogni `start` crea una cartella, che viene nominata in base al giorno nel quale si avvia la registrazione, nel formato:
 
 ```text
-YYYY-MM-DD_HH-MM-SS
+YY-MM-DD
 ```
 
-L'ordinamento alfabetico coincide con quello cronologico. 
-Se due sessioni partono nello stesso secondo, la seconda assume lo stesso nome aggiungendo un intero in fondo per discriminare il nome. 
+Se più sessioni partono nello stesso giorno, la seconda aggiunge un intero in fondo (`_2`, `_3`…).
+L'ordinamento alfabetico coincide con quello cronologico per giorno; dentro lo stesso giorno dipende dal suffisso.
 Questo nome comunque non funge da identificare. Puoi trovare l'UUID `current-session.json`.
 
 Ogni registrazione e transcript resta sul disco locale e viene ignorata nel

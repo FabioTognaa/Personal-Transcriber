@@ -204,7 +204,7 @@ e mai come default.
 Una sessione è una directory indipendente, ad esempio:
 
 ```text
-sessions/2026-10-07_01-17-03/
+sessions/26-10-07/
   session.json
   audio/
     mixed.wav

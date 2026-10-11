@@ -18,6 +18,8 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
 ### Changed
 
+- Le cartelle di sessione sono nominate con il giorno di avvio (`YY-MM-DD`) e non
+  più con data e ora; più sessioni nello stesso giorno usano i suffissi `_2`, `_3`….
 - Ridotte le opzioni di tuning: `start` e `transcribe` espongono solo soglia,
   innesco e fine del VAD (`--vad-threshold`, `--vad-start-ms`, `--vad-end-ms`) e
   `--asr-flash-attention`; thread, strategia, beam, temperatura e Core ML usano i

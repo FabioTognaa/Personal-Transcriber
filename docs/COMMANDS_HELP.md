@@ -45,7 +45,8 @@ opzioni **VAD** e di **inferenza** valgono per `start` e `transcribe`.
 
 Se non si passa né `--model` né `--model-preset` e si lancia `start` da un
 terminale interattivo, compare un menu dei modelli; senza terminale (script, CI,
-test) il menu non compare e vale `small`.
+test) il menu non compare e vale `small`. Dal menu, `q` annulla la scelta e non
+avvia nulla.
 
 Preset e file documentati:
 

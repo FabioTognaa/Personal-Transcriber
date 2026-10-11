@@ -90,7 +90,7 @@ Una volta conclusa la trascrizione vengono scritti due file accanto all'input, c
    cattura live non ha questi tetti, perché non tiene l'intero audio in RAM.
 7. Controlla lo spazio disco. Per un WAV stima i byte della sessione. Per la live
    pretende almeno 64 MiB liberi, e ricontrolla ogni 5 secondi.
-8. Crea la directory `sessions/YYYY-MM-DD_HH-MM-SS/` (ora locale di inizio) e i file
+8. Crea la directory `sessions/YY-MM-DD/` (giorno locale di inizio) e i file
    vuoti. Lo stato passa a `running` solo dopo che il worker ASR è partito. Se
    quell'avvio fallisce, la sessione viene chiusa come `failed` con i WAV finalizzati,
    anche se sono ancora a zero campioni.
@@ -210,8 +210,6 @@ non un sottotitolo istantaneo.
 
 Il progetto si appoggia a `whisper-rs` per usare whisper.cpp in locale. Fa girare uno dei modelli che si trovano in `models/`, caricati in memoria una volta sola quando il programma viene inizializzato. Il suo compito è tradurre in testo i campioni che il VAD gli passa come PCM float mono a 16 kHz.
 
-Il motore non decide dove inizia e finisce il parlato e non decide i tempi: riceve segmenti già ritagliati e restituisce solo il testo. Il comportamento si legge seguendo quello che accade dal caricamento fino alla stringa finale.
-
 1. Viene validata la config di inferenza: numero di thread, strategia di decodifica, ampiezza del fascio, temperatura e prompt devono essere coerenti fra loro; Core ML viene rifiutato se il binario non è stato compilato per supportarlo.
 2. Il file GGML viene aperto e i pesi caricati in memoria, con la GPU accesa (Metal su Apple Silicon) e la flash attention attiva salvo disattivazione esplicita. Il contesto resta vivo per tutta la sessione e viene riusato da ogni segmento.
 3. Prima del caricamento viene calcolato lo SHA-256 del file del modello. Il calcolo ha una cache: finché dimensione e data del file non cambiano, l'hash viene riletto senza rileggere i pesi. L'hash finisce in ogni riga del transcript.
@@ -283,7 +281,7 @@ esce da quella directory viene rifiutato.
 ## I file di una sessione
 
 ```text
-sessions/YYYY-MM-DD_HH-MM-SS/
+sessions/YY-MM-DD/
   session.json        chi, quando, con quale configurazione
   status.json         fotografia aggiornata mentre gira, e stato finale
   events.jsonl        avvio, pause, riprese, stop, errori
