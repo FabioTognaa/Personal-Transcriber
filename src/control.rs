@@ -13,7 +13,10 @@ use crate::storage::{CurrentSession, ExclusiveFileLock, atomic_write_json, read_
 use crate::{Error, Result};
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(3);
-const STOP_COMPLETION_TIMEOUT: Duration = Duration::from_secs(60);
+/// Idle bound for `stop`: reset every time the transcript grows, so a long
+/// segmentation replay finishes while a real stall still fails.
+const STOP_STALL_TIMEOUT: Duration = Duration::from_secs(300);
+const COMPLETION_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const CONTROL_LOCK_FILE: &str = ".control.lock";
 
@@ -141,25 +144,38 @@ fn acquire_control_lock(sessions_dir: &Path, deadline: Instant) -> Result<Exclus
     Err(Error::ControlTimeout)
 }
 
+/// Waits until the session reaches `completed`. Bounded by an idle timeout that
+/// resets while the transcript grows, so a long finalization (a segmentation
+/// replay transcribing new ranges) is allowed and a real stall still fails.
 fn wait_for_completed(paths: &SessionPaths) -> Result<SessionStatus> {
-    wait_for_completed_until(paths, Instant::now() + STOP_COMPLETION_TIMEOUT)
+    let mut last_progress = Instant::now();
+    let mut transcript_len = transcript_length(paths);
+    loop {
+        let status: SessionStatus = read_json(&paths.status)?;
+        match status.state {
+            SessionState::Completed => return Ok(status),
+            SessionState::Failed => {
+                return Err(Error::InvalidControlState {
+                    action: ControlAction::Stop,
+                    state: status.state,
+                });
+            }
+            _ => {}
+        }
+        let len = transcript_length(paths);
+        if len != transcript_len {
+            transcript_len = len;
+            last_progress = Instant::now();
+        }
+        if last_progress.elapsed() >= STOP_STALL_TIMEOUT {
+            return Err(Error::ControlCompletionTimeout);
+        }
+        thread::sleep(COMPLETION_POLL_INTERVAL);
+    }
 }
 
-fn wait_for_completed_until(paths: &SessionPaths, deadline: Instant) -> Result<SessionStatus> {
-    while Instant::now() < deadline {
-        let status: SessionStatus = read_json(&paths.status)?;
-        if status.state == SessionState::Completed {
-            return Ok(status);
-        }
-        if status.state == SessionState::Failed {
-            return Err(Error::InvalidControlState {
-                action: ControlAction::Stop,
-                state: status.state,
-            });
-        }
-        thread::sleep(CONTROL_POLL_INTERVAL);
-    }
-    Err(Error::ControlCompletionTimeout)
+fn transcript_length(paths: &SessionPaths) -> u64 {
+    std::fs::metadata(&paths.transcript).map_or(0, |metadata| metadata.len())
 }
 
 fn control_action_satisfied(action: ControlAction, state: SessionState) -> bool {
