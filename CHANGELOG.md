@@ -7,8 +7,22 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-10-13
+
 ### Added
 
+- Segmentazione vocale adattiva: la soglia di voce si autoregola sul rumore di
+  fondo stimato e usa due livelli (apertura più alta, chiusura più bassa), così i
+  confini dei segmenti non cambiano col volume del microfono.
+- Contesto tra segmenti opt-in con `--asr-context`: la coda del testo del segmento
+  precedente entra nel prompt iniziale, ma solo se quel segmento è affidabile
+  (bassa `no_speech_probability`).
+- La confidenza di ogni segmento (`no_speech_probability`) è registrata in
+  `transcript.jsonl` e mostrata come `(no-speech 0.XX)` nell'export Markdown;
+  l'export in testo resta pulito.
+- Tutti i parametri del VAD regolabili da CLI: `--vad-noise-multiplier`,
+  `--vad-pre-roll-ms`, `--vad-post-roll-ms`, `--vad-min-speech-ms`,
+  `--vad-max-segment-ms`.
 - Comando `transcribe <file>` per trascrivere un file esistente senza creare una
   sessione: produce solo `<nome>.txt`, in una cartella nuova sotto `--sessions-dir`
   (stesso nome `YY-MM-DD` di `start`), e non conserva audio né eventi.
@@ -21,21 +35,36 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
 ### Changed
 
+- I segmenti lunghi non vengono più tagliati a metà parola: il taglio cade sulla
+  pausa più lunga interna, con parlato sufficiente da entrambe le parti e nessun
+  campione perso.
+- Silenzio di chiusura predefinito da 800 a 1600 ms: meno segmenti frammentati da
+  una o due parole.
+- Modello predefinito `large-v3-turbo` per `start`, `transcribe` e `doctor` (prima
+  `small`), così un controllo verde di `doctor` verifica il modello che verrà usato.
+- Schema del transcript alla versione 4; l'export resta compatibile con le sessioni
+  delle versioni precedenti.
+- I WAV di sessione vengono checkpointati circa quattro volte al secondo invece che
+  a ogni chunk: su crash si perde al massimo l'ultimo intervallo.
 - Le cartelle di sessione sono nominate con il giorno di avvio (`YY-MM-DD`) e non
   più con data e ora; più sessioni nello stesso giorno usano i suffissi `_2`, `_3`….
-- Ridotte le opzioni di tuning: `start` e `transcribe` espongono solo soglia,
-  innesco e fine del VAD (`--vad-threshold`, `--vad-start-ms`, `--vad-end-ms`) e
-  `--asr-flash-attention`; thread, strategia, beam, temperatura e Core ML usano i
-  default. Rimossi i flag mai usati `--asr-threads`, `--asr-strategy`,
-  `--asr-best-of`, `--asr-beam-size`, `--asr-temperature`, `--asr-coreml`,
-  `--vad-pre-roll-ms`, `--vad-post-roll-ms`, `--vad-min-speech-ms`,
-  `--vad-max-segment-ms` e `--probe-seconds`; i valori restano registrati in
-  `session.json`.
+- Ridotte le opzioni di tuning ASR: `start` e `transcribe` espongono solo
+  `--asr-flash-attention` e `--asr-context`; thread, strategia, beam, temperatura e
+  Core ML usano i default. Rimossi i flag mai usati `--asr-threads`, `--asr-strategy`,
+  `--asr-best-of`, `--asr-beam-size`, `--asr-temperature`, `--asr-coreml` e
+  `--probe-seconds`; i valori restano registrati in `session.json`.
 - `--sessions-dir` non è più globale: compare solo sui comandi che creano o
   indirizzano una sessione.
 - I log di whisper.cpp/ggml non finiscono più su standard error a prescindere: passano
   per il logging del transcriber, quindi restano nascosti finché non si alza la
   verbosità con `-v`. Vale per `start` e per `transcribe`.
+
+### Fixed
+
+- `stop` non fallisce più su finalizzazioni lunghe: attende finché il transcript
+  cresce (fino a 300 s di inattività), invece di un tetto fisso di 60 s.
+- Riparazione della coda JSONL delle sessioni interrotte senza caricare in memoria
+  l'intero file.
 
 ## [0.2.0]
 
