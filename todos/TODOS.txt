@@ -1,0 +1,23 @@
+3. Problema B — la conversione 48→16 nel file registrato (nostro codice)
+
+Sui recording reali in `sessions/` ho misurato un difetto vero, indipendente dal
+problema A:
+
+- Il graffio/artefatto sta solo nel canale di sistema (`system.wav`): il microfono
+  è pulito (0 salti), il mix li eredita.
+- Con sorgenti a 48 kHz e target 16 kHz il rapporto è esattamente 3, e il nostro
+  Normalizer in quel caso prende un campione ogni tre senza alcun filtro.
+- Ho riprodotto l'algoritmo: un tono a 9 kHz esce a 7 kHz, a 11 kHz esce a 5 kHz,
+  a 15 kHz esce a 1 kHz, a piena ampiezza. Cioè tutto il contenuto sopra 8 kHz
+  (sibilanti forti, tasti, notifiche, musica del far-end) viene ripiegato nella
+  banda udibile: è il "graffio".
+
+
+• nuova feature: nel menù di start viene chiesto il nome della repo della registrazione:
+- la struttura del nuovo nome sarà "YY-MM-DD_nome_della_repo": il nome della repo viene appunto passato in input
+- la richiesta del nome avviene - ribadisco - nel menù dello start prima del nome in input dalla cli
+- se contiene spazi questi vengono rimpiazzati automaticamente con '_'
+- se contiene caratteri non validi (es. / : * ? " < > |) viene segnalato che il nome non puo essere usato e si ripropone il menù per riscrivere un altro nome
+- se in /session c'è già una cartella con il nome scritto viene segnalato e chiesto un altro nome
+- durante la scrittura del nome, come per la scelta del modello, se si digita 'q' e si invia si quitta il comando start
+- dopo il nome accettabile deve venire chiesto il modello esattamente come ora
