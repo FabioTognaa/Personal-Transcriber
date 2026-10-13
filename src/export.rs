@@ -173,7 +173,12 @@ pub fn render_markdown(lines: &[SegmentLine], title: &str) -> String {
         output.push_str(&format_timestamp(line.start, '.'));
         output.push_str(" → ");
         output.push_str(&format_timestamp(line.end, '.'));
-        output.push_str("` ");
+        output.push('`');
+        // Confidence hint, Markdown only: the .txt export stays verbatim-clean.
+        if let Some(probability) = line.no_speech_probability {
+            output.push_str(&format!(" (no-speech {probability:.2})"));
+        }
+        output.push(' ');
         output.push_str(&line.text);
         output.push('\n');
     }
@@ -342,6 +347,20 @@ mod tests {
         .expect("text should render");
 
         assert_eq!(rendered, " Testo  non corretto.\nSeconda riga\n");
+    }
+
+    #[test]
+    fn markdown_shows_confidence_while_text_export_stays_clean() {
+        let mut with_confidence = segment_lines(&[
+            segment(0, 1_000_000, " Testo  non corretto."),
+            segment(1_500_000, 2_000_000, "Seconda riga"),
+        ]);
+        with_confidence[0].no_speech_probability = Some(0.42);
+
+        let markdown = render_markdown(&with_confidence, "Transcript");
+        assert!(markdown.contains("(no-speech 0.42)"));
+        assert!(markdown.contains(" Testo  non corretto."));
+        assert!(!render_text(&with_confidence).contains("no-speech"));
     }
 
     #[test]
