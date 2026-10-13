@@ -20,8 +20,10 @@ fn fixture_with_short_pause_produces_one_deterministic_segment() {
 
     assert_eq!(segments.len(), 1);
     assert_eq!(segments[0].start, TimestampUs(0));
-    assert_eq!(segments[0].end, TimestampUs(1_400_000));
-    assert_eq!(segments[0].samples.len(), 22_400);
+    // With the 1600 ms end-silence the 1000 ms trailing pause no longer closes
+    // the segment during streaming; flush() finalizes the whole span.
+    assert_eq!(segments[0].end, TimestampUs(2_200_000));
+    assert_eq!(segments[0].samples.len(), 35_200);
 
     let metrics = segmenter.metrics();
     assert_eq!(metrics.speech_duration_us, 600_000);

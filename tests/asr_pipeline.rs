@@ -240,6 +240,7 @@ fn segmentation_replay_does_not_duplicate_transcript_ranges() {
         post_roll_ms: 0,
         min_speech_ms: 20,
         max_segment_ms: 40,
+        noise_multiplier: 4.0,
     };
     let mut sink = TranscribingSink::new(
         DelayedFirstAsrEngine { first: true },

@@ -63,13 +63,28 @@ pub struct ModelIdentity {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SegmenterConfig {
+    /// Minimum RMS threshold for voice. The adaptive threshold estimated from
+    /// the background noise never drops below this, so it doubles as a manual
+    /// floor for noisy recordings.
     pub energy_threshold: f32,
     pub start_trigger_ms: u64,
+    /// Silence that closes a segment. Generous on purpose: closing on every
+    /// short breath fragments one utterance into 1-2 word segments, and a
+    /// short segment costs whisper a full encoder pass without context.
     pub end_silence_ms: u64,
     pub pre_roll_ms: u64,
     pub post_roll_ms: u64,
     pub min_speech_ms: u64,
     pub max_segment_ms: u64,
+    /// Voice must exceed the estimated background noise by this factor
+    /// (4.0 ≈ +12 dB) to be classified as speech. Added after schema version 3.
+    #[serde(default = "default_noise_multiplier")]
+    pub noise_multiplier: f32,
+}
+
+#[must_use]
+pub fn default_noise_multiplier() -> f32 {
+    4.0
 }
 
 impl Default for SegmenterConfig {
@@ -77,11 +92,12 @@ impl Default for SegmenterConfig {
         Self {
             energy_threshold: 0.02,
             start_trigger_ms: 60,
-            end_silence_ms: 800,
+            end_silence_ms: 1600,
             pre_roll_ms: 200,
             post_roll_ms: 200,
             min_speech_ms: 100,
             max_segment_ms: 30_000,
+            noise_multiplier: default_noise_multiplier(),
         }
     }
 }
