@@ -5,8 +5,7 @@ con quali pezzi è costruito, e cosa fa davvero dal momento in cui si lancia un
 comando fino ai file lasciati sul disco.
 
 È una descrizione del comportamento attuale, non una roadmap e non un manuale di
-installazione. Per l'uso quotidiano resta il [README](../README.md). Per le decisioni
-di prodotto resta [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md).
+installazione. Per l'uso quotidiano resta il [README](../README.md).
 
 ## Cosa fa
 
@@ -162,10 +161,11 @@ Il loop principale, ogni 5 ms circa, fa nell'ordine:
 1. Legge un eventuale comando `pause`, `resume` o `stop`.
 2. Legge un eventuale segnale di terminazione.
 3. Prende il prossimo chunk dalla coda audio.
-4. Lo scrive sul WAV e aggiorna l'header. Dopo ogni chunk il file è già un WAV
-   leggibile, non solo alla fine.
+4. Lo scrive sul WAV. L'header e i campioni in buffer vengono checkpointati
+   insieme a `status.json`, circa quattro volte al secondo: a metà sessione il
+   file è già un WAV leggibile fino all'ultimo checkpoint, non solo alla fine.
 5. Se la trascrizione è attiva, passa il chunk al segmentatore.
-6. Circa quattro volte al secondo riscrive `status.json`.
+6. Circa quattro volte al secondo riscrive `status.json` e checkpointa i WAV.
 
 L'audio quindi tocca il disco prima di essere interpretato. Se più avanti Whisper è
 lento, la registrazione non aspetta l'inferenza per esistere.
@@ -179,15 +179,17 @@ persi.
 
 Il VAD non è un modello neurale. Per ogni chunk calcola l'RMS, cioè la radice della
 media dei quadrati dei campioni. Se l'RMS è almeno 0,02, il chunk è voce. I default
-sono elencati sotto e vengono tutti salvati in `session.json`. Da CLI si regolano
-solo voce, innesco e fine (`--vad-threshold`, `--vad-start-ms`, `--vad-end-ms`);
-pre-roll, post-roll, minimo e massimo restano fissi:
+sono elencati sotto e vengono tutti salvati in `session.json`. Tutti questi parametri
+sono regolabili da CLI (`--vad-threshold`, `--vad-noise-multiplier`, `--vad-start-ms`,
+`--vad-end-ms`, `--vad-pre-roll-ms`, `--vad-post-roll-ms`, `--vad-min-speech-ms`,
+`--vad-max-segment-ms`):
 
-| Soglia    | Default            | Effetto                                                                                                                                      |
-| --------- | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Voce      | RMS ≥ 0,02         | Distingue voce e silenzio.                                                                                                                   |
-| Innesco   | 60 ms di voce      | Un click isolato non apre un segmento.                                                                                                       |
-| Fine      | 800 ms di silenzio | Una pausa breve dentro la frase non la spezza.                                                                                               |
+| Soglia    | Default             | Effetto                                                                                                                                      |
+| --------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Voce      | RMS ≥ 0,02          | Distingue voce e silenzio.                                                                                                                   |
+| Rumore    | × 4,0 sul fondo     | La voce deve superare il rumore di fondo stimato di questo fattore.                                                                          |
+| Innesco   | 60 ms di voce       | Un click isolato non apre un segmento.                                                                                                       |
+| Fine      | 1600 ms di silenzio | Una pausa breve dentro la frase non la spezza.                                                                                               |
 | Pre-roll  | 200 ms             | Quando la voce è confermata, si tiene anche un po' di audio precedente, per non tagliare l'attacco.                                          |
 | Post-roll | 200 ms             | Si tiene un po' di audio dopo l'ultima voce, senza superare la fine del chunk corrente.                                                      |
 | Minimo    | 100 ms di voce     | Sotto questa durata il segmento si scarta e il contatore `segments_discarded` sale.                                                          |
@@ -295,9 +297,9 @@ sessions/YY-MM-DD/
 `session.json` è la descrizione stabile: lingua, percorso del modello, identità
 SHA-256, dispositivi o file di origine, soglie VAD, parametri ASR e prompt
 iniziale. `events.jsonl` è il diario. `transcript.jsonl` è la fonte da cui derivano
-tutti gli export. Lo schema attuale è la versione 3; un export di un'altra versione
-viene rifiutato. Il campo `prompt` è stato aggiunto dopo la versione 3 come campo
-opzionale, quindi i transcript precedenti restano leggibili.
+tutti gli export. Lo schema attuale è la versione 4; un export di un'altra versione
+viene rifiutato. I campi `prompt` e `no_speech_probability` sono stati aggiunti dopo
+la versione 3 come campi opzionali, quindi i transcript precedenti restano leggibili.
 
 Gli stati possibili sono `starting`, `running`, `transcription_paused`, `stopping`,
 `completed`, `failed`.

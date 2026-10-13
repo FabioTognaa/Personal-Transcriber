@@ -87,8 +87,6 @@ Per quanto riguarda i formati wav, ad oggi non c'è ancora una funzione nativa c
 
 - [Sezione aiuto per tutti i comandi](docs/COMMANDS_HELP.md)
 - [Funzionamento e architettura](docs/RELAZIONE.md)
-- [Contesto completo e scelte architetturali](PROJECT_CONTEXT.md)
-- [Roadmap di implementazione](ROADMAP.md)
 - [Come leggere una cartella di sessione](sessions/README.md)
 - [Storico delle modifiche](CHANGELOG.md)
 

@@ -25,8 +25,8 @@ Disponibili su tutti i comandi.
 | `-V`, `--version` | flag                  | —       | Stampa la versione del programma.                                                    |
 
 `--sessions-dir` non è globale: compare solo sui comandi che creano o
-indirizzano una sessione (`start`, `doctor`, `status`, `pause`, `resume`,
-`stop`). `devices`, `transcribe` ed `export` non lo espongono.
+indirizzano una sessione (`start`, `doctor`, `transcribe`, `status`, `pause`,
+`resume`, `stop`). `devices` ed `export` non lo espongono.
 
 ## Opzioni condivise
 
@@ -39,13 +39,13 @@ opzioni **VAD** e di **inferenza** valgono per `start` e `transcribe`.
 | Opzione                 | Tipo         | Default                         | Descrizione                                                                                           |
 | ----------------------- | ------------ | ------------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `--model <PERCORSO>`    | percorso     | —                               | File GGML locale. Ha la precedenza su `--model-preset`.                                               |
-| `--model-preset <NOME>` | enum         | `small`                         | Modello documentato risolto sotto `models/`. Valori: `small`, `medium`, `large-v3-turbo`, `large-v3`. |
+| `--model-preset <NOME>` | enum         | `large-v3-turbo`                | Modello documentato risolto sotto `models/`. Valori: `small`, `medium`, `large-v3-turbo`, `large-v3`. |
 | `--language <LINGUA>`   | `it` \| `en` | `it`                            | Lingua parlata, valida per tutta la sessione o per l'intero file. Nessun rilevamento automatico.      |
 | `--asr-prompt <TESTO>`  | testo        | prompt predefinito della lingua | Prompt iniziale per Whisper. `--asr-prompt ""` lo disattiva.                                          |
 
 Se non si passa né `--model` né `--model-preset` e si lancia `start` da un
 terminale interattivo, compare un menu dei modelli; senza terminale (script, CI,
-test) il menu non compare e vale `small`. Dal menu, `q` annulla la scelta e non
+test) il menu non compare e vale `large-v3-turbo`. Dal menu, `q` annulla la scelta e non
 avvia nulla.
 
 Preset e file documentati:
@@ -61,19 +61,26 @@ Preset e file documentati:
 
 Flag per impsotare i timing del riconscimento vocale, di seguito le impostazioni di default:
 
-| Opzione                         | Tipo     | Default | Descrizione                                             |
-| ------------------------------- | -------- | ------- | ------------------------------------------------------- |
-| `--vad-threshold <NUMERO>`      | decimale | `0.02`  | Soglia RMS oltre la quale un chunk è voce.              |
-| `--vad-start-ms <MILLISECONDI>` | intero   | `60`    | Voce consecutiva necessaria ad aprire un segmento.      |
-| `--vad-end-ms <MILLISECONDI>`   | intero   | `800`   | Silenzio consecutivo necessario a chiudere un segmento. |
+| Opzione                              | Tipo     | Default | Descrizione                                                                     |
+| ------------------------------------ | -------- | ------- | ------------------------------------------------------------------------------- |
+| `--vad-threshold <NUMERO>`           | decimale | `0.02`  | Soglia RMS oltre la quale un chunk è voce.                                      |
+| `--vad-noise-multiplier <NUMERO>`    | decimale | `4.0`   | Quanto la voce deve superare il rumore di fondo stimato per contare come parlato. |
+| `--vad-start-ms <MILLISECONDI>`      | intero   | `60`    | Voce consecutiva necessaria ad aprire un segmento.                              |
+| `--vad-end-ms <MILLISECONDI>`        | intero   | `1600`  | Silenzio consecutivo necessario a chiudere un segmento.                         |
+| `--vad-pre-roll-ms <MILLISECONDI>`   | intero   | `200`   | Audio tenuto prima della prima voce.                                            |
+| `--vad-post-roll-ms <MILLISECONDI>`  | intero   | `200`   | Audio tenuto dopo l'ultima voce.                                                |
+| `--vad-min-speech-ms <MILLISECONDI>` | intero   | `100`   | Sotto questa durata il segmento è scartato (contato in `status.json`).           |
+| `--vad-max-segment-ms <MILLISECONDI>`| intero   | `30000` | Tetto di durata; il parlato più lungo è tagliato sulla pausa più lunga.         |
 
 ### Inferenza
 
-L'unico flag dispnibile è quello della flash attention attivato di default. Per controllare se l'accuraezza migliora a scapito di un esosità di memorie e tempo vi consiglio di fare delle proveComparative.
+L'unico flag per la flash attention è attivato di default; `--asr-context` è
+spento di default. Per controllare se l'accuraezza migliora a scapito di un esosità di memorie e tempo vi consiglio di fare delle proveComparative.
 
 | Opzione                               | Tipo     | Default | Descrizione                                                                                               |
 | ------------------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------- |
 | `--asr-flash-attention <true\|false>` | booleano | `true`  | Attiva flash attention di whisper.cpp. Va passato un valore esplicito, es. `--asr-flash-attention false`. |
+| `--asr-context`                       | flag     | spento  | Porta la coda del segmento precedente nel prompt iniziale (rischio di ripetere un errore precoce).        |
 
 ## Comandi
 
@@ -99,8 +106,8 @@ l'exit code è diverso da zero.
 
 | Opzione                     | Tipo     | Default           | Descrizione                                                                                            |
 | --------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------ |
-| `--model <PERCORSO>`        | percorso | preset `small`    | Modello da verificare. Ha la precedenza su `--model-preset`.                                           |
-| `--model-preset <NOME>`     | enum     | `small`           | Preset da verificare se `--model` non è passato.                                                       |
+| `--model <PERCORSO>`        | percorso | preset `large-v3-turbo` | Modello da verificare. Ha la precedenza su `--model-preset`.                                           |
+| `--model-preset <NOME>`     | enum     | `large-v3-turbo`        | Preset da verificare se `--model` non è passato.                                                       |
 | `--probe-audio`             | flag     | spento            | Apre entrambi gli input live per tre secondi e verifica che arrivi segnale, senza creare una sessione. |
 | `--microphone <NOME>`       | testo    | input predefinito | Microfono usato dal probe. Richiede `--probe-audio`.                                                   |
 | `--system-audio <NOME>`     | testo    | BlackHole         | Input di sistema usato dal probe. Richiede `--probe-audio`.                                            |
@@ -120,12 +127,12 @@ personal-transcriber start [opzioni]
 | `--microphone <NOME>`          | testo        | input predefinito  | Dispositivo del microfono.           |
 | `--system-audio <NOME>`        | testo        | BlackHole rilevato | Dispositivo dell'audio di sistema.   |
 | `--model <PERCORSO>`           | percorso     | —                  | Vedi “Modello e lingua”.             |
-| `--model-preset <NOME>`        | enum         | `small`            | Vedi “Modello e lingua”.             |
+| `--model-preset <NOME>`        | enum         | `large-v3-turbo`   | Vedi “Modello e lingua”.             |
 | `--language <LINGUA>`          | `it` \| `en` | `it`               | Vedi “Modello e lingua”.             |
 | `--asr-prompt <TESTO>`         | testo        | predefinito lingua | Vedi “Modello e lingua”.             |
 | `--vad-threshold <NUMERO>`     | decimale     | `0.02`             | Vedi “Segmentazione vocale”.         |
 | `--vad-start-ms <MS>`          | intero       | `60`               | Vedi “Segmentazione vocale”.         |
-| `--vad-end-ms <MS>`            | intero       | `800`              | Vedi “Segmentazione vocale”.         |
+| `--vad-end-ms <MS>`            | intero       | `1600`             | Vedi “Segmentazione vocale”.         |
 | `--asr-flash-attention <BOOL>` | booleano     | `true`             | Vedi “Inferenza”.                    |
 | `--sessions-dir <PERCORSO>`    | percorso     | `sessions`         | Directory in cui creare la sessione. |
 
@@ -150,12 +157,12 @@ con `-v`.
 | ------------------------------ | ------------ | ------------------ | ---------------------------------------------- |
 | `<FILE>` (argomento)           | percorso     | richiesto          | Input `.wav`, `.mp3`, `.m4a`, `.mp4` o `.aac`. |
 | `--model <PERCORSO>`           | percorso     | —                  | Vedi “Modello e lingua”.                       |
-| `--model-preset <NOME>`        | enum         | `small`            | Vedi “Modello e lingua”.                       |
+| `--model-preset <NOME>`        | enum         | `large-v3-turbo`   | Vedi “Modello e lingua”.                       |
 | `--language <LINGUA>`          | `it` \| `en` | `it`               | Vedi “Modello e lingua”.                       |
 | `--asr-prompt <TESTO>`         | testo        | predefinito lingua | Vedi “Modello e lingua”.                       |
 | `--vad-threshold <NUMERO>`     | decimale     | `0.02`             | Vedi “Segmentazione vocale”.                   |
 | `--vad-start-ms <MS>`          | intero       | `60`               | Vedi “Segmentazione vocale”.                   |
-| `--vad-end-ms <MS>`            | intero       | `800`              | Vedi “Segmentazione vocale”.                   |
+| `--vad-end-ms <MS>`            | intero       | `1600`             | Vedi “Segmentazione vocale”.                   |
 | `--asr-flash-attention <BOOL>` | booleano     | `true`             | Vedi “Inferenza”.                              |
 | `--sessions-dir <PERCORSO>`    | percorso     | `sessions`         | Directory in cui creare la cartella di output. |
 
