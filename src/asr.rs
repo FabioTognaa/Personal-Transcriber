@@ -56,9 +56,8 @@ pub fn contextual_prompt(
     previous_no_speech_probability: Option<f32>,
 ) -> Option<String> {
     if !config.context_enabled
-        || previous_no_speech_probability.is_some_and(|probability| {
-            probability > CONTEXT_MAX_NO_SPEECH_PROBABILITY
-        })
+        || previous_no_speech_probability
+            .is_some_and(|probability| probability > CONTEXT_MAX_NO_SPEECH_PROBABILITY)
     {
         return config.prompt.clone();
     }
@@ -179,11 +178,8 @@ impl<E: AsrEngine> SegmentSink for TranscribingSink<E> {
                         .map(|(text, probability)| (text.as_str(), *probability))
                         .unwrap_or(("", None));
                     let mut call_inference = inference.clone();
-                    call_inference.prompt = contextual_prompt(
-                        &inference,
-                        previous_text,
-                        previous_probability,
-                    );
+                    call_inference.prompt =
+                        contextual_prompt(&inference, previous_text, previous_probability);
                     let output = engine.transcribe(&segment, &language, &call_inference)?;
                     let no_speech_probability = output.no_speech_probability;
                     previous = Some((output.text.clone(), no_speech_probability));

@@ -477,7 +477,9 @@ fn print_model_menu(options: &[ModelOption]) {
             option.path.display()
         );
     }
-    print!("Invio = default (large-v3-turbo), numero = scegli, p = percorso personalizzato, q = annulla: ");
+    print!(
+        "Invio = default (large-v3-turbo), numero = scegli, p = percorso personalizzato, q = annulla: "
+    );
     let _ = std::io::stdout().flush();
 }
 

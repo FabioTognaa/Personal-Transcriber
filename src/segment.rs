@@ -87,8 +87,7 @@ impl Segmenter {
     }
 
     fn update_noise_floor(&mut self, chunk_rms: f32, duration_us: u64) {
-        let alpha =
-            (duration_us as f32 / 1_000_000.0 / NOISE_TAU_SECONDS).clamp(0.0, 1.0);
+        let alpha = (duration_us as f32 / 1_000_000.0 / NOISE_TAU_SECONDS).clamp(0.0, 1.0);
         self.noise_floor += (chunk_rms - self.noise_floor) * alpha;
     }
 
@@ -527,7 +526,10 @@ mod tests {
         assert_eq!(segments[0].end, TimestampUs(180_000));
         assert!(segments.windows(2).all(|pair| pair[0].end == pair[1].start));
         assert_eq!(
-            segments.iter().map(|segment| segment.samples.len()).sum::<usize>(),
+            segments
+                .iter()
+                .map(|segment| segment.samples.len())
+                .sum::<usize>(),
             55 * 320,
             "no samples may be lost at the split"
         );

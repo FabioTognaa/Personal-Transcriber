@@ -208,8 +208,7 @@ fn append_segments<E: AsrEngine>(
             .map(|(text, probability)| (text.as_str(), *probability))
             .unwrap_or(("", None));
         let mut call_inference = inference.clone();
-        call_inference.prompt =
-            contextual_prompt(inference, previous_text, previous_probability);
+        call_inference.prompt = contextual_prompt(inference, previous_text, previous_probability);
         let output = engine.transcribe(&segment, language, &call_inference)?;
         *previous = Some((output.text.clone(), output.no_speech_probability));
         lines.push(SegmentLine {
@@ -382,7 +381,9 @@ mod tests {
                 context_enabled,
                 ..InferenceConfig::default()
             };
-            let mut engine = RecordingAsr { prompts: Vec::new() };
+            let mut engine = RecordingAsr {
+                prompts: Vec::new(),
+            };
             let mut lines = Vec::new();
             let mut previous = None;
             append_segments(
