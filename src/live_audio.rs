@@ -7,7 +7,7 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, Sample, SampleFormat, SizedSample};
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, bounded};
 
-use crate::audio::{DEFAULT_CHUNK_DURATION_MS, downmix, lerp};
+use crate::audio::{DEFAULT_CHUNK_DURATION_MS, Normalizer};
 use crate::domain::{
     AudioSourceKind, CaptureMetrics, PcmChunk, TARGET_CHANNELS, TARGET_SAMPLE_RATE_HZ, TimestampUs,
 };
@@ -355,51 +355,6 @@ fn audio_error(error: impl std::fmt::Display) -> Error {
     Error::Audio(error.to_string())
 }
 
-struct Normalizer {
-    source_rate: u32,
-    phase: f64,
-    previous: Option<f32>,
-}
-
-impl Normalizer {
-    fn new(source_rate: u32) -> Self {
-        Self {
-            source_rate,
-            phase: 0.0,
-            previous: None,
-        }
-    }
-
-    fn push(&mut self, interleaved: &[f32], channels: u16) -> Vec<f32> {
-        if channels == 0 || self.source_rate == 0 {
-            return Vec::new();
-        }
-        let channels = usize::from(channels);
-        let mono = downmix(interleaved, channels);
-        if mono.is_empty() {
-            return Vec::new();
-        }
-
-        let mut input = Vec::with_capacity(mono.len() + usize::from(self.previous.is_some()));
-        if let Some(previous) = self.previous {
-            input.push(previous);
-        }
-        input.extend_from_slice(&mono);
-        self.previous = mono.last().copied();
-
-        let step = f64::from(self.source_rate) / f64::from(TARGET_SAMPLE_RATE_HZ);
-        let mut output = Vec::new();
-        while self.phase + 1.0 < input.len() as f64 {
-            let lower = self.phase.floor() as usize;
-            let fraction = (self.phase - lower as f64) as f32;
-            output.push(lerp(input[lower], input[lower + 1], fraction));
-            self.phase += step;
-        }
-        self.phase -= (input.len() - 1) as f64;
-        output
-    }
-}
-
 struct LiveMixer {
     microphone: VecDeque<f32>,
     system: VecDeque<f32>,
@@ -462,14 +417,19 @@ impl LiveMixer {
             ),
             _ => return Ok(()),
         };
-        let normalizer = normalizer.get_or_insert_with(|| Normalizer::new(input.sample_rate_hz));
-        if normalizer.source_rate != input.sample_rate_hz {
+        let normalizer = normalizer.get_or_insert_with(|| {
+            Normalizer::new(usize::from(input.channels), input.sample_rate_hz)
+        });
+        if normalizer.source_rate() != input.sample_rate_hz {
             return Err(Error::Audio(format!(
                 "{:?} sample rate changed from {} Hz to {} Hz during capture",
-                input.source, normalizer.source_rate, input.sample_rate_hz
+                input.source,
+                normalizer.source_rate(),
+                input.sample_rate_hz
             )));
         }
-        let normalized = normalizer.push(&input.samples, input.channels);
+        let mut normalized = Vec::new();
+        normalizer.push_interleaved(&input.samples, usize::from(input.channels), &mut normalized);
         *peak = peak.max(
             normalized
                 .iter()
@@ -652,16 +612,18 @@ mod tests {
             .pop_padded_chunk(0)
             .expect("remaining source audio should flush");
 
-        assert_eq!(chunk.microphone.samples.len(), 100);
-        assert_eq!(chunk.system.samples.len(), 100);
+        assert_eq!(chunk.microphone.samples.len(), 101);
+        assert_eq!(chunk.system.samples.len(), 101);
         assert_eq!(chunk.mixed.samples[75], 0.5);
     }
 
     #[test]
     fn streaming_resampler_keeps_duration_across_callback_boundaries() {
-        let mut normalizer = Normalizer::new(48_000);
-        let first = normalizer.push(&vec![0.25; 480], 1);
-        let second = normalizer.push(&vec![0.25; 480], 1);
+        let mut normalizer = Normalizer::new(1, 48_000);
+        let mut first = Vec::new();
+        normalizer.push_interleaved(&vec![0.25; 480], 1, &mut first);
+        let mut second = Vec::new();
+        normalizer.push_interleaved(&vec![0.25; 480], 1, &mut second);
 
         assert!((first.len() + second.len()).abs_diff(320) <= 1);
         assert!(first.iter().chain(&second).all(|sample| *sample == 0.25));

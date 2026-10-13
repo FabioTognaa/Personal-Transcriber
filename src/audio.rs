@@ -353,7 +353,7 @@ fn consume_packet(
 /// Streams interleaved PCM into 16 kHz mono by downmixing each packet and
 /// resampling with a cursor that carries across packet boundaries, so no click
 /// appears at a packet seam.
-struct Normalizer {
+pub(crate) struct Normalizer {
     channels: usize,
     source_rate: u32,
     cursor: f64,
@@ -361,7 +361,7 @@ struct Normalizer {
 }
 
 impl Normalizer {
-    fn new(channels: usize, source_rate: u32) -> Self {
+    pub(crate) fn new(channels: usize, source_rate: u32) -> Self {
         Self {
             channels,
             source_rate,
@@ -370,7 +370,16 @@ impl Normalizer {
         }
     }
 
-    fn push_interleaved(&mut self, interleaved: &[f32], channels: usize, output: &mut Vec<f32>) {
+    pub(crate) fn source_rate(&self) -> u32 {
+        self.source_rate
+    }
+
+    pub(crate) fn push_interleaved(
+        &mut self,
+        interleaved: &[f32],
+        channels: usize,
+        output: &mut Vec<f32>,
+    ) {
         self.channels = channels.max(1);
         for frame in interleaved.chunks_exact(self.channels) {
             self.mono
