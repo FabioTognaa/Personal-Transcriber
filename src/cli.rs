@@ -148,24 +148,44 @@ pub struct ModelArgs {
     pub asr_prompt: Option<String>,
 }
 
-/// Voice-activity segmentation, shared by `start` and `transcribe`.
-///
-/// Only the parameters that realistically depend on the recording environment
-/// are exposed; pre/post roll, minimum speech and maximum segment length keep
-/// their defaults and are still recorded in `session.json`.
+/// Voice-activity segmentation, shared by `start` and `transcribe`. All
+/// `SegmenterConfig` parameters are exposed; the defaults are tuned for
+/// continuous meeting speech and everything is recorded in `session.json`.
 #[derive(Debug, Args)]
 pub struct VadArgs {
-    /// RMS threshold above which a PCM chunk is treated as voice.
+    /// Minimum RMS threshold for voice; the adaptive noise-based threshold
+    /// never drops below it.
     #[arg(long, default_value_t = 0.02)]
     pub vad_threshold: f32,
+
+    /// Voice must exceed the estimated background noise by this factor to
+    /// count as speech.
+    #[arg(long, default_value_t = crate::domain::default_noise_multiplier())]
+    pub vad_noise_multiplier: f32,
 
     /// Consecutive voice required to start a segment.
     #[arg(long, default_value_t = 60)]
     pub vad_start_ms: u64,
 
     /// Consecutive silence required to end a segment.
-    #[arg(long, default_value_t = 800)]
+    #[arg(long, default_value_t = 1600)]
     pub vad_end_ms: u64,
+
+    /// Audio kept before the first voice chunk.
+    #[arg(long, default_value_t = 200)]
+    pub vad_pre_roll_ms: u64,
+
+    /// Audio kept after the last voice chunk.
+    #[arg(long, default_value_t = 200)]
+    pub vad_post_roll_ms: u64,
+
+    /// Speech shorter than this is discarded as noise (counted in status.json).
+    #[arg(long, default_value_t = 100)]
+    pub vad_min_speech_ms: u64,
+
+    /// Ceiling for a segment; longer speech is split on its longest pause.
+    #[arg(long, default_value_t = 30_000)]
+    pub vad_max_segment_ms: u64,
 }
 
 /// whisper.cpp decoding options, shared by `start` and `transcribe`.
@@ -178,6 +198,11 @@ pub struct InferenceArgs {
     /// Enable whisper.cpp flash attention.
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub asr_flash_attention: bool,
+
+    /// Carry the tail of the previous segment's text into the initial prompt
+    /// (opt-in: a repeated early mistake can leak into later segments).
+    #[arg(long, default_value_t = false)]
+    pub asr_context: bool,
 }
 
 #[derive(Debug, Args)]
@@ -339,15 +364,20 @@ fn resolve_initial_prompt(override_prompt: Option<String>, language: &str) -> Op
 fn segmenter_config(vad: &VadArgs) -> SegmenterConfig {
     SegmenterConfig {
         energy_threshold: vad.vad_threshold,
+        noise_multiplier: vad.vad_noise_multiplier,
         start_trigger_ms: vad.vad_start_ms,
         end_silence_ms: vad.vad_end_ms,
-        ..SegmenterConfig::default()
+        pre_roll_ms: vad.vad_pre_roll_ms,
+        post_roll_ms: vad.vad_post_roll_ms,
+        min_speech_ms: vad.vad_min_speech_ms,
+        max_segment_ms: vad.vad_max_segment_ms,
     }
 }
 
 fn inference_config(inference: &InferenceArgs, prompt: Option<String>) -> InferenceConfig {
     InferenceConfig {
         flash_attention: inference.asr_flash_attention,
+        context_enabled: inference.asr_context,
         prompt,
         ..InferenceConfig::default()
     }
@@ -694,5 +724,49 @@ mod tests {
         };
 
         assert_eq!(args.format, ExportFormat::Vtt);
+    }
+
+    #[test]
+    fn vad_and_context_flags_wire_into_their_configs() {
+        let cli = Cli::try_parse_from([
+            "personal-transcriber",
+            "transcribe",
+            "input.mp3",
+            "--model",
+            "models/fixture.bin",
+            "--vad-end-ms",
+            "2400",
+            "--vad-pre-roll-ms",
+            "300",
+            "--vad-post-roll-ms",
+            "250",
+            "--vad-min-speech-ms",
+            "120",
+            "--vad-max-segment-ms",
+            "25000",
+            "--vad-noise-multiplier",
+            "5.0",
+            "--asr-context",
+        ])
+        .expect("transcribe command should parse");
+
+        let Command::Transcribe(args) = cli.command else {
+            panic!("expected transcribe command");
+        };
+
+        assert_eq!(
+            segmenter_config(&args.vad),
+            SegmenterConfig {
+                energy_threshold: 0.02,
+                noise_multiplier: 5.0,
+                start_trigger_ms: 60,
+                end_silence_ms: 2400,
+                pre_roll_ms: 300,
+                post_roll_ms: 250,
+                min_speech_ms: 120,
+                max_segment_ms: 25000,
+            }
+        );
+        assert!(inference_config(&args.inference, None).context_enabled);
     }
 }
