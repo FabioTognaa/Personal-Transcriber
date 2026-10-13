@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use crate::asr::{AsrEngine, WhisperEngine, validate_inference_config};
+use crate::asr::{AsrEngine, WhisperEngine, contextual_prompt, validate_inference_config};
 use crate::audio::{CompressedAudioSource, FileAudioSource};
 use crate::domain::{InferenceConfig, PcmChunk, SegmenterConfig, SpeechSegment};
 use crate::export::{SegmentLine, render_text};
@@ -166,6 +166,9 @@ fn collect_lines<E: AsrEngine>(
     on_progress: &mut impl FnMut(u64),
 ) -> Result<Vec<SegmentLine>> {
     let mut lines = Vec::new();
+    // Previous segment's text and confidence: the mobile prompt source when
+    // context is enabled (same logic as the live sink).
+    let mut previous: Option<(String, Option<f32>)> = None;
     while let Some(chunk) = source.next_chunk()? {
         append_segments(
             segmenter.push_chunk(chunk),
@@ -174,6 +177,7 @@ fn collect_lines<E: AsrEngine>(
             inference,
             &mut lines,
             on_progress,
+            &mut previous,
         )?;
     }
     append_segments(
@@ -183,6 +187,7 @@ fn collect_lines<E: AsrEngine>(
         inference,
         &mut lines,
         on_progress,
+        &mut previous,
     )?;
     Ok(lines)
 }
@@ -194,14 +199,24 @@ fn append_segments<E: AsrEngine>(
     inference: &InferenceConfig,
     lines: &mut Vec<SegmentLine>,
     on_progress: &mut impl FnMut(u64),
+    previous: &mut Option<(String, Option<f32>)>,
 ) -> Result<()> {
     for segment in segments {
         let end_us = segment.end.0;
-        let output = engine.transcribe(&segment, language, inference)?;
+        let (previous_text, previous_probability) = previous
+            .as_ref()
+            .map(|(text, probability)| (text.as_str(), *probability))
+            .unwrap_or(("", None));
+        let mut call_inference = inference.clone();
+        call_inference.prompt =
+            contextual_prompt(inference, previous_text, previous_probability);
+        let output = engine.transcribe(&segment, language, &call_inference)?;
+        *previous = Some((output.text.clone(), output.no_speech_probability));
         lines.push(SegmentLine {
             start: segment.start,
             end: segment.end,
             text: output.text,
+            no_speech_probability: output.no_speech_probability,
         });
         on_progress(end_us);
     }
@@ -286,6 +301,7 @@ mod tests {
             Ok(AsrOutput {
                 text: "ciao".to_owned(),
                 inference_duration_us: 1,
+                no_speech_probability: Some(0.1),
             })
         }
     }
@@ -329,6 +345,72 @@ mod tests {
         assert_eq!(lines[0].start, TimestampUs(0));
         // Progress reports the end of each transcribed segment.
         assert_eq!(seen, vec![lines[0].end.0]);
+    }
+
+    #[test]
+    fn context_enabled_carries_the_previous_tail_into_the_next_prompt() {
+        struct RecordingAsr {
+            prompts: Vec<Option<String>>,
+        }
+        impl AsrEngine for RecordingAsr {
+            fn transcribe(
+                &mut self,
+                _segment: &SpeechSegment,
+                _language: &str,
+                config: &InferenceConfig,
+            ) -> Result<AsrOutput> {
+                self.prompts.push(config.prompt.clone());
+                Ok(AsrOutput {
+                    text: "prima seconda".to_owned(),
+                    inference_duration_us: 1,
+                    no_speech_probability: Some(0.1),
+                })
+            }
+        }
+
+        fn speech_segment(start_us: u64) -> SpeechSegment {
+            SpeechSegment {
+                start: TimestampUs(start_us),
+                end: TimestampUs(start_us + 200_000),
+                samples: vec![0.25; 3_200],
+            }
+        }
+
+        fn prompts_with(context_enabled: bool) -> Vec<Option<String>> {
+            let inference = InferenceConfig {
+                prompt: Some("base".to_owned()),
+                context_enabled,
+                ..InferenceConfig::default()
+            };
+            let mut engine = RecordingAsr { prompts: Vec::new() };
+            let mut lines = Vec::new();
+            let mut previous = None;
+            append_segments(
+                vec![speech_segment(0), speech_segment(2_000_000)],
+                &mut engine,
+                "it",
+                &inference,
+                &mut lines,
+                &mut |_| {},
+                &mut previous,
+            )
+            .expect("segments should transcribe");
+            engine.prompts
+        }
+
+        // On: the second call receives the static prompt plus the tail of the
+        // first segment's text. Off: both calls receive the static prompt only.
+        assert_eq!(
+            prompts_with(true),
+            vec![
+                Some("base".to_owned()),
+                Some("base prima seconda".to_owned())
+            ]
+        );
+        assert_eq!(
+            prompts_with(false),
+            vec![Some("base".to_owned()), Some("base".to_owned())]
+        );
     }
 
     #[test]
@@ -389,6 +471,7 @@ mod tests {
             start: TimestampUs(0),
             end: TimestampUs(200_000),
             text: "ciao".to_owned(),
+            no_speech_probability: None,
         }];
 
         let path = write_transcript(&directory, Path::new("/audio/meeting.wav"), &lines)

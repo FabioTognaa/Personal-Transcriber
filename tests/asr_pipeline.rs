@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use personal_transcriber::Result;
@@ -8,7 +9,7 @@ use personal_transcriber::asr::{
 };
 use personal_transcriber::audio::FileAudioSource;
 use personal_transcriber::domain::{
-    InferenceConfig, ModelIdentity, SegmenterConfig, SpeechSegment, TranscriptSegment,
+    InferenceConfig, ModelIdentity, SegmenterConfig, SpeechSegment, TimestampUs, TranscriptSegment,
 };
 use personal_transcriber::session::{self, SegmentSink, StartOptions};
 use uuid::Uuid;
@@ -28,6 +29,7 @@ impl AsrEngine for MockAsrEngine {
         Ok(AsrOutput {
             text: RAW_TEXT.to_owned(),
             inference_duration_us: 10_000,
+            no_speech_probability: Some(0.5),
         })
     }
 }
@@ -65,6 +67,37 @@ impl AsrEngine for DelayedFirstAsrEngine {
         Ok(AsrOutput {
             text: "fixture".to_owned(),
             inference_duration_us: 1,
+            no_speech_probability: None,
+        })
+    }
+}
+
+/// Records every inference call so a test can assert that a segmentation replay
+/// never re-infers a range that was already transcribed.
+struct CountingAsrEngine {
+    calls: Arc<Mutex<Vec<(TimestampUs, TimestampUs)>>>,
+    delay_first: bool,
+}
+
+impl AsrEngine for CountingAsrEngine {
+    fn transcribe(
+        &mut self,
+        segment: &SpeechSegment,
+        _language: &str,
+        _config: &InferenceConfig,
+    ) -> Result<AsrOutput> {
+        self.calls
+            .lock()
+            .expect("calls mutex poisoned")
+            .push((segment.start, segment.end));
+        if self.delay_first {
+            self.delay_first = false;
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        Ok(AsrOutput {
+            text: "fixture".to_owned(),
+            inference_duration_us: 1,
+            no_speech_probability: None,
         })
     }
 }
@@ -110,6 +143,7 @@ fn simulated_english_session_writes_verbatim_canonical_transcript() {
     assert_eq!(segments[0].model, model.name);
     assert_eq!(segments[0].model_sha256, model.sha256);
     assert_eq!(segments[0].inference, inference);
+    assert_eq!(segments[0].no_speech_probability, Some(0.5));
 
     let status = personal_transcriber::control::current_status(&sessions_dir)
         .expect("final status should be readable");
@@ -285,6 +319,73 @@ fn segmentation_replay_does_not_duplicate_transcript_ranges() {
     assert!(status.segmentation_replay_required);
     assert!(!ranges.is_empty());
     assert_eq!(ranges.len(), unique.len());
+}
+
+#[test]
+fn segmentation_replay_does_not_infer_a_range_twice() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let sessions_dir = temporary.path().join("sessions");
+    let input = temporary.path().join("continuous-speech.wav");
+    write_constant_wav(&input, 3);
+    let model = fixture_model();
+    let inference = InferenceConfig::default();
+    let segmenter = SegmenterConfig {
+        energy_threshold: 0.02,
+        start_trigger_ms: 20,
+        end_silence_ms: 20,
+        pre_roll_ms: 0,
+        post_roll_ms: 0,
+        min_speech_ms: 20,
+        max_segment_ms: 40,
+        noise_multiplier: 4.0,
+    };
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let mut sink = TranscribingSink::new(
+        CountingAsrEngine {
+            calls: Arc::clone(&calls),
+            delay_first: true,
+        },
+        model.clone(),
+        "it".to_owned(),
+        inference.clone(),
+    );
+
+    session::run_with_sink(
+        StartOptions {
+            sessions_dir: sessions_dir.clone(),
+            input_wav: Some(input),
+            model: Some(model.path.clone()),
+            language: "it".to_owned(),
+            microphone: None,
+            system_audio: None,
+            segmenter,
+            inference,
+            model_identity: Some(model),
+        },
+        &mut sink,
+    )
+    .expect("overloaded session should recover by replaying segmentation");
+
+    let status = personal_transcriber::control::current_status(&sessions_dir)
+        .expect("status should be readable");
+    assert!(
+        status.segmentation_replay_required,
+        "the test must actually exercise the replay path"
+    );
+
+    // Dedup must run before inference: the replay re-segments the whole audio,
+    // and any range already transcribed live must be skipped, not inferred again.
+    let calls = calls.lock().expect("calls mutex poisoned");
+    let unique = calls
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    assert!(!calls.is_empty());
+    assert_eq!(
+        calls.len(),
+        unique.len(),
+        "a replayed range was inferred more than once"
+    );
 }
 
 #[test]

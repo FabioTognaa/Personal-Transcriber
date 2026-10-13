@@ -19,10 +19,13 @@ use crate::session::{SegmentSink, SegmentSinkStatus};
 use crate::storage::{TranscriptWriter, atomic_write_json, read_json};
 use crate::{Error, Result};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AsrOutput {
     pub text: String,
     pub inference_duration_us: u64,
+    /// Worst `no_speech_probability` whisper reported for the segment: the
+    /// confidence ruler used to gate prompt context and inspect quality.
+    pub no_speech_probability: Option<f32>,
 }
 
 pub trait AsrEngine: Send + 'static {
@@ -35,6 +38,54 @@ pub trait AsrEngine: Send + 'static {
 }
 
 const ASR_QUEUE_CAPACITY: usize = 8;
+
+/// Above this no-speech probability the previous segment is considered
+/// unreliable and its text is not offered as context (whisper's own default
+/// no-speech threshold).
+pub const CONTEXT_MAX_NO_SPEECH_PROBABILITY: f32 = 0.6;
+
+/// Effective prompt for the next segment when `--asr-context` is on: the static
+/// language prompt plus a short tail of the previous segment's text. The gate
+/// skips the tail when the previous segment was low-confidence, so a doubtful
+/// guess cannot repeat in later segments. The dynamic prompt itself is never
+/// recorded: it is reconstructible from the transcript.
+#[must_use]
+pub fn contextual_prompt(
+    config: &InferenceConfig,
+    previous_text: &str,
+    previous_no_speech_probability: Option<f32>,
+) -> Option<String> {
+    if !config.context_enabled
+        || previous_no_speech_probability.is_some_and(|probability| {
+            probability > CONTEXT_MAX_NO_SPEECH_PROBABILITY
+        })
+    {
+        return config.prompt.clone();
+    }
+    let base = config.prompt.clone();
+    let tail = prompt_tail(previous_text, config.context_window_chars);
+    match (base, tail) {
+        (Some(base), Some(tail)) => Some(format!("{base} {tail}")),
+        (prompt, None) => prompt,
+        (None, prompt) => prompt,
+    }
+}
+
+/// Last `window_chars` characters of `text`, trimmed; `None` when empty.
+fn prompt_tail(text: &str, window_chars: usize) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || window_chars == 0 {
+        return None;
+    }
+    let skip = trimmed.chars().count().saturating_sub(window_chars);
+    let tail: String = trimmed.chars().skip(skip).collect();
+    let tail = tail.trim();
+    if tail.is_empty() {
+        None
+    } else {
+        Some(tail.to_owned())
+    }
+}
 
 /// Built-in initial prompt for a supported language.
 ///
@@ -109,6 +160,9 @@ impl<E: AsrEngine> SegmentSink for TranscribingSink<E> {
             let result = (|| -> Result<()> {
                 let mut writer = TranscriptWriter::open(&transcript_path)?;
                 let mut completed = std::collections::HashSet::new();
+                // Previous segment's text and confidence: the mobile prompt
+                // source when context is enabled.
+                let mut previous: Option<(String, Option<f32>)> = None;
                 while let Ok(command) = receiver.recv() {
                     status
                         .lock()
@@ -120,7 +174,19 @@ impl<E: AsrEngine> SegmentSink for TranscribingSink<E> {
                     if !completed.insert((segment.start, segment.end)) {
                         continue;
                     }
-                    let output = engine.transcribe(&segment, &language, &inference)?;
+                    let (previous_text, previous_probability) = previous
+                        .as_ref()
+                        .map(|(text, probability)| (text.as_str(), *probability))
+                        .unwrap_or(("", None));
+                    let mut call_inference = inference.clone();
+                    call_inference.prompt = contextual_prompt(
+                        &inference,
+                        previous_text,
+                        previous_probability,
+                    );
+                    let output = engine.transcribe(&segment, &language, &call_inference)?;
+                    let no_speech_probability = output.no_speech_probability;
+                    previous = Some((output.text.clone(), no_speech_probability));
                     writer.append(&TranscriptSegment {
                         schema_version: SCHEMA_VERSION,
                         segment_id: Uuid::new_v4(),
@@ -131,7 +197,11 @@ impl<E: AsrEngine> SegmentSink for TranscribingSink<E> {
                         language: language.clone(),
                         model: model.name.clone(),
                         model_sha256: model.sha256.clone(),
+                        // The static config is recorded; the per-segment
+                        // dynamic prompt is deliberately not (see
+                        // `contextual_prompt`).
                         inference: inference.clone(),
+                        no_speech_probability,
                     })?;
                     let mut current = status
                         .lock()
@@ -264,6 +334,9 @@ impl AsrEngine for WhisperEngine {
             parameters.set_initial_prompt(prompt);
         }
         parameters.set_temperature(config.temperature);
+        // Drop non-speech tag hallucinations like "(musica)"; the decoding
+        // thresholds stay at whisper's defaults.
+        parameters.set_suppress_nst(true);
         parameters.set_print_special(false);
         parameters.set_print_progress(false);
         parameters.set_print_realtime(false);
@@ -280,10 +353,14 @@ impl AsrEngine for WhisperEngine {
 
         let segment_count = state.full_n_segments();
         let mut text = String::new();
+        let mut no_speech_probability: Option<f32> = None;
         for index in 0..segment_count {
             let whisper_segment = state.get_segment(index).ok_or_else(|| {
                 Error::Asr("whisper returned an invalid segment index".to_owned())
             })?;
+            let probability = whisper_segment.no_speech_probability();
+            no_speech_probability =
+                Some(no_speech_probability.map_or(probability, |worst| worst.max(probability)));
             text.push_str(
                 whisper_segment
                     .to_str()
@@ -293,6 +370,7 @@ impl AsrEngine for WhisperEngine {
         Ok(AsrOutput {
             text,
             inference_duration_us: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+            no_speech_probability,
         })
     }
 }
@@ -429,5 +507,44 @@ mod tests {
 
         assert_eq!(first.sha256.len(), 64);
         assert_eq!(second.sha256, "cached-value");
+    }
+
+    #[test]
+    fn contextual_prompt_combines_gates_and_windows_the_tail() {
+        let config = InferenceConfig {
+            prompt: Some("base".to_owned()),
+            context_enabled: true,
+            context_window_chars: 3,
+            ..InferenceConfig::default()
+        };
+
+        assert_eq!(
+            contextual_prompt(&config, "abc def ghi ", Some(0.1)),
+            Some("base ghi".to_owned())
+        );
+        // Gate: a low-confidence previous segment keeps only the static prompt.
+        assert_eq!(
+            contextual_prompt(&config, "abc def ghi", Some(0.9)),
+            Some("base".to_owned())
+        );
+        // No previous text yet: nothing to carry over.
+        assert_eq!(
+            contextual_prompt(&config, "", None),
+            Some("base".to_owned())
+        );
+    }
+
+    #[test]
+    fn contextual_prompt_off_leaves_the_prompt_untouched() {
+        let config = InferenceConfig {
+            prompt: Some("base".to_owned()),
+            context_enabled: false,
+            ..InferenceConfig::default()
+        };
+
+        assert_eq!(
+            contextual_prompt(&config, "abc def ghi", Some(0.1)),
+            Some("base".to_owned())
+        );
     }
 }

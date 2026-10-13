@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 pub const SESSION_METADATA_FILE: &str = "session.json";
 pub const EVENTS_FILE: &str = "events.jsonl";
 pub const TRANSCRIPT_FILE: &str = "transcript.jsonl";

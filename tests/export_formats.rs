@@ -104,6 +104,7 @@ fn write_session(session: &Path) {
         model: "fixture.bin".to_owned(),
         model_sha256: "fixture-sha256".to_owned(),
         inference: InferenceConfig::default(),
+        no_speech_probability: None,
     };
     fs::write(
         session.join(TRANSCRIPT_FILE),

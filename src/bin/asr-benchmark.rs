@@ -115,6 +115,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         flash_attention: args.flash_attention,
         coreml: args.coreml,
         prompt: args.prompt.clone(),
+        context_enabled: false,
+        context_window_chars: personal_transcriber::domain::default_context_window_chars(),
     };
     let identity = model_identity(&args.model)?;
     let source = FileAudioSource::open(&args.input)?;

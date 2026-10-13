@@ -29,6 +29,23 @@ pub struct InferenceConfig {
     /// after schema version 3, so it is optional when reading older transcripts.
     #[serde(default)]
     pub prompt: Option<String>,
+    /// Opt-in carry-over of the previous segment's text as prompt context
+    /// (`--asr-context`). Off by default because an early mistake can repeat
+    /// in later segments. Added after schema version 3.
+    #[serde(default)]
+    pub context_enabled: bool,
+    /// Maximum characters of previous text offered as context. Added after
+    /// schema version 3. Zero disables the tail while keeping the flag
+    /// recorded as-is.
+    #[serde(default = "default_context_window_chars")]
+    pub context_window_chars: usize,
+}
+
+/// Default length of the prompt tail: long enough to suggest style and
+/// terminology, too short to keep "continuing" an earlier sentence.
+#[must_use]
+pub fn default_context_window_chars() -> usize {
+    120
 }
 
 /// whisper.cpp thread count: available parallelism capped at eight, falling
@@ -49,6 +66,8 @@ impl Default for InferenceConfig {
             flash_attention: true,
             coreml: false,
             prompt: None,
+            context_enabled: false,
+            context_window_chars: default_context_window_chars(),
         }
     }
 }
@@ -246,6 +265,11 @@ pub struct TranscriptSegment {
     pub model: String,
     pub model_sha256: String,
     pub inference: InferenceConfig,
+    /// Worst `no_speech_probability` whisper reported for this segment: the
+    /// confidence ruler used to gate prompt context and inspect low-quality
+    /// segments. `None` for transcripts written before schema version 4.
+    #[serde(default)]
+    pub no_speech_probability: Option<f32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,6 +404,7 @@ mod tests {
             model: "fixture-model".to_owned(),
             model_sha256: "fixture-sha256".to_owned(),
             inference: InferenceConfig::default(),
+            no_speech_probability: Some(0.42),
         };
 
         let encoded = serde_json::to_string(&segment).expect("segment should serialize");

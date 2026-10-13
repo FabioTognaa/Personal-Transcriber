@@ -23,11 +23,14 @@ pub enum Format {
 /// A single rendered line: the minimal data shared by the plain-text and
 /// Markdown renderers, also reusable by callers that never build a session
 /// record (for example the one-shot `transcribe` command).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct SegmentLine {
     pub start: TimestampUs,
     pub end: TimestampUs,
     pub text: String,
+    /// Whisper's worst no-speech probability for the segment, shown in the
+    /// Markdown export as a quality hint. `None` when unknown (older transcripts).
+    pub no_speech_probability: Option<f32>,
 }
 
 pub fn export_session(
@@ -46,9 +49,11 @@ pub fn export_session(
     let transcript = session.join(TRANSCRIPT_FILE);
     ensure_safe_output(session, output)?;
     let metadata: SessionMetadata = read_json(&session.join(SESSION_METADATA_FILE))?;
-    if metadata.schema_version != SCHEMA_VERSION {
+    // Older transcripts stay readable: fields added since their version are
+    // `#[serde(default)]`. Only a future, unknown version is rejected.
+    if metadata.schema_version > SCHEMA_VERSION {
         return Err(Error::InvalidExport(format!(
-            "unsupported session schema version {}; expected {SCHEMA_VERSION}",
+            "session schema version {} is newer than supported {SCHEMA_VERSION}",
             metadata.schema_version
         )));
     }
@@ -85,12 +90,12 @@ fn read_segments(path: &Path, expected_session_id: Uuid) -> Result<Vec<Transcrip
         let segment: TranscriptSegment = serde_json::from_str(&line).map_err(|error| {
             invalid_transcript(path, line_number, format!("invalid JSON: {error}"))
         })?;
-        if segment.schema_version != SCHEMA_VERSION {
+        if segment.schema_version > SCHEMA_VERSION {
             return Err(invalid_transcript(
                 path,
                 line_number,
                 format!(
-                    "unsupported schema version {}; expected {SCHEMA_VERSION}",
+                    "schema version {} is newer than supported {SCHEMA_VERSION}",
                     segment.schema_version
                 ),
             ));
@@ -147,6 +152,7 @@ fn segment_lines(segments: &[TranscriptSegment]) -> Vec<SegmentLine> {
             start: segment.start,
             end: segment.end,
             text: segment.text.clone(),
+            no_speech_probability: segment.no_speech_probability,
         })
         .collect()
 }
@@ -320,6 +326,7 @@ mod tests {
             model: "fixture.bin".to_owned(),
             model_sha256: "fixture-sha256".to_owned(),
             inference: InferenceConfig::default(),
+            no_speech_probability: None,
         }
     }
 
