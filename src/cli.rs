@@ -134,7 +134,7 @@ pub struct ModelArgs {
 
     /// Built-in model preset resolved under `models/`; ignored when `--model` is set.
     /// Without either flag, the model is asked interactively on a terminal, otherwise
-    /// the `small` preset is used.
+    /// the `large-v3-turbo` preset is used.
     #[arg(long, value_enum)]
     pub model_preset: Option<ModelPreset>,
 
@@ -239,11 +239,7 @@ pub fn execute(command: Command) -> Result<()> {
             Ok(())
         }
         Command::Doctor(args) => {
-            let model = args.model.clone().unwrap_or_else(|| {
-                args.model_preset
-                    .unwrap_or(ModelPreset::Small)
-                    .default_path()
-            });
+            let model = doctor_model_path(args.model.clone(), args.model_preset);
             let report = if args.probe_audio {
                 crate::diagnostics::doctor_with_audio_probe(
                     &args.sessions.sessions_dir,
@@ -389,6 +385,12 @@ fn resolve_model_path(model: Option<PathBuf>, preset: Option<ModelPreset>) -> Op
     model.or_else(|| preset.map(ModelPreset::default_path))
 }
 
+/// Model `doctor` verifies when no flag is given: the same default `start` and
+/// `transcribe` resolve, so a green `doctor` checks the model you will run.
+fn doctor_model_path(model: Option<PathBuf>, preset: Option<ModelPreset>) -> PathBuf {
+    model.unwrap_or_else(|| preset.unwrap_or(ModelPreset::LargeV3Turbo).default_path())
+}
+
 struct ModelOption {
     label: String,
     path: PathBuf,
@@ -475,7 +477,7 @@ fn print_model_menu(options: &[ModelOption]) {
             option.path.display()
         );
     }
-    print!("Invio = default (small), numero = scegli, p = percorso personalizzato, q = annulla: ");
+    print!("Invio = default (large-v3-turbo), numero = scegli, p = percorso personalizzato, q = annulla: ");
     let _ = std::io::stdout().flush();
 }
 
@@ -485,40 +487,40 @@ enum ModelPick {
     Cancelled,
 }
 
-fn small_model() -> ModelPick {
-    ModelPick::Use(ModelPreset::Small.default_path())
+fn default_model() -> ModelPick {
+    ModelPick::Use(default_model_path())
 }
 
 /// Interactive model picker. Shown only on an interactive terminal and only when
-/// no model flag was given. Returns the `small` preset on an empty answer.
+/// no model flag was given. Returns the `large-v3-turbo` preset on an empty answer.
 fn select_model_interactively() -> ModelPick {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        return small_model();
+        return default_model();
     }
     let options = model_menu_options(Path::new(crate::model::MODELS_DIR));
     print_model_menu(&options);
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_err() {
-        return small_model();
+        return default_model();
     }
     match parse_menu_selection(&input, options.len()) {
-        MenuChoice::Default => small_model(),
+        MenuChoice::Default => default_model(),
         MenuChoice::Select(index) => ModelPick::Use(
             options
                 .get(index)
                 .map(|option| option.path.clone())
-                .unwrap_or_else(|| ModelPreset::Small.default_path()),
+                .unwrap_or_else(default_model_path),
         ),
         MenuChoice::Custom => {
             print!("Percorso del modello (.bin): ");
             let _ = std::io::stdout().flush();
             let mut path = String::new();
             if std::io::stdin().read_line(&mut path).is_err() {
-                return small_model();
+                return default_model();
             }
             let path = path.trim();
             if path.is_empty() {
-                small_model()
+                default_model()
             } else {
                 ModelPick::Use(PathBuf::from(path))
             }
@@ -528,6 +530,10 @@ fn select_model_interactively() -> ModelPick {
             ModelPick::Cancelled
         }
     }
+}
+
+fn default_model_path() -> PathBuf {
+    ModelPreset::LargeV3Turbo.default_path()
 }
 
 /// Resolve the ASR model: the `--model` flag or preset, otherwise the interactive
@@ -577,7 +583,7 @@ mod tests {
     }
 
     #[test]
-    fn start_defaults_to_the_small_model_preset() {
+    fn start_defaults_to_the_large_v3_turbo_model_preset() {
         let cli = Cli::try_parse_from(["personal-transcriber", "start"])
             .expect("start command should parse");
 
@@ -589,8 +595,8 @@ mod tests {
         assert_eq!(args.model.model_preset, None);
         assert_eq!(
             resolve_model_path(args.model.model, args.model.model_preset)
-                .unwrap_or_else(|| ModelPreset::Small.default_path()),
-            PathBuf::from("models/ggml-small-q5_1.bin")
+                .unwrap_or_else(default_model_path),
+            PathBuf::from("models/ggml-large-v3-turbo-q8_0.bin")
         );
     }
 
@@ -644,6 +650,20 @@ mod tests {
             Some(PathBuf::from("models/ggml-large-v3-turbo-q8_0.bin"))
         );
         assert_eq!(resolve_model_path(None, None), None);
+    }
+
+    #[test]
+    fn doctor_defaults_to_the_same_model_as_start() {
+        // `doctor` must verify the model `start`/`transcribe` will actually use,
+        // so a green check is meaningful when no model flag is passed.
+        assert_eq!(
+            doctor_model_path(None, None),
+            resolve_model_path(None, None).unwrap_or_else(default_model_path)
+        );
+        assert_eq!(
+            doctor_model_path(None, None),
+            PathBuf::from("models/ggml-large-v3-turbo-q8_0.bin")
+        );
     }
 
     #[test]
