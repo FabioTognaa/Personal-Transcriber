@@ -194,8 +194,11 @@ attuale è **competitivo sul piano privacy**, non su velocità/accuratezza assol
 
 ## 5. Verifica dell'accuratezza (criterio "gratis")
 
-1. Trascrivere **un file reale** (~10–15 min, italiano) con il binario attuale →
-   salvare l'output.
+**File di prova scelto dall'utente:** `Riunione in General-20260326_141957-Registrazione
+della riunione.mp4` (~90,5 min, italiano). Output di riferimento già presenti nel
+repo: `sessions/26-10-11/…txt` e `sessions/26-10-11_2/…txt` (624 righe, identici).
+
+1. Trascrivere il file di prova con il binario attuale → salvare l'output.
 2. Applicare una leva.
 3. Ritrascrivere lo stesso file → confrontare i due `.txt` riga per riga.
 4. La leva è "gratis" solo se le differenze sono trascurabili (punteggiatura/righe,
