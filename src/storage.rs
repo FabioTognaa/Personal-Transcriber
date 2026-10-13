@@ -1,5 +1,5 @@
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufWriter, ErrorKind, Write};
+use std::io::{BufWriter, ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -194,6 +194,22 @@ impl SessionStorage {
         }
         first_error.map_or(Ok(()), Err)
     }
+
+    /// Checkpoints the WAV headers and buffered samples. Called on a timer so a
+    /// crash loses at most the last interval, without paying a header rewrite per
+    /// 20 ms chunk.
+    pub fn flush_audio(&mut self) -> Result<()> {
+        for writer in [
+            &mut self.microphone_audio,
+            &mut self.system_audio,
+            &mut self.audio,
+        ] {
+            if let Some(writer) = writer.as_mut() {
+                writer.flush()?;
+            }
+        }
+        Ok(())
+    }
 }
 
 fn write_chunk(writer: &mut hound::WavWriter<BufWriter<File>>, chunk: &PcmChunk) -> Result<()> {
@@ -201,7 +217,6 @@ fn write_chunk(writer: &mut hound::WavWriter<BufWriter<File>>, chunk: &PcmChunk)
         let sample = sample.clamp(-1.0, 1.0);
         writer.write_sample((sample * f32::from(i16::MAX)).round() as i16)?;
     }
-    writer.flush()?;
     Ok(())
 }
 
@@ -226,27 +241,54 @@ fn write_json_line(writer: &mut impl Write, value: &impl Serialize) -> Result<()
 }
 
 pub fn repair_jsonl_tail(path: &Path) -> Result<bool> {
-    let contents = fs::read(path)?;
-    if contents.is_empty() || contents.ends_with(b"\n") {
+    let mut file = match OpenOptions::new().read(true).write(true).open(path) {
+        Ok(file) => file,
+        // A missing file is nothing to repair, not a failure: recovery must not
+        // abort `start` because one JSONL artifact was deleted.
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error.into()),
+    };
+    let length = file.metadata()?.len();
+    if length == 0 {
+        return Ok(false);
+    }
+    file.seek(SeekFrom::End(-1))?;
+    let mut last = [0_u8; 1];
+    file.read_exact(&mut last)?;
+    if last[0] == b'\n' {
         return Ok(false);
     }
 
-    let tail_start = contents
-        .iter()
-        .rposition(|byte| *byte == b'\n')
-        .map_or(0, |index| index + 1);
-    let tail = &contents[tail_start..];
-    if serde_json::from_slice::<serde_json::Value>(tail).is_ok() {
-        let mut file = OpenOptions::new().append(true).open(path)?;
+    let tail_start = tail_start_offset(&mut file, length)?;
+    file.seek(SeekFrom::Start(tail_start))?;
+    let mut tail = Vec::new();
+    file.read_to_end(&mut tail)?;
+    if serde_json::from_slice::<serde_json::Value>(&tail).is_ok() {
+        file.seek(SeekFrom::End(0))?;
         file.write_all(b"\n")?;
         file.sync_all()?;
     } else {
-        OpenOptions::new()
-            .write(true)
-            .open(path)?
-            .set_len(tail_start as u64)?;
+        file.set_len(tail_start)?;
     }
     Ok(true)
+}
+
+/// Offset just after the last newline, read backwards in bounded windows so a
+/// long transcript is never loaded whole just to find the incomplete tail.
+fn tail_start_offset(file: &mut File, length: u64) -> Result<u64> {
+    const WINDOW: u64 = 64 * 1024;
+    let mut end = length;
+    while end > 0 {
+        let start = end.saturating_sub(WINDOW);
+        file.seek(SeekFrom::Start(start))?;
+        let mut buffer = vec![0_u8; (end - start) as usize];
+        file.read_exact(&mut buffer)?;
+        if let Some(index) = buffer.iter().rposition(|byte| *byte == b'\n') {
+            return Ok(start + index as u64 + 1);
+        }
+        end = start;
+    }
+    Ok(0)
 }
 
 pub fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {

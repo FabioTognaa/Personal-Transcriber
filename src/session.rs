@@ -307,28 +307,7 @@ fn run_with_sink_internal(
         },
     };
     let mut storage = SessionStorage::create(&options.sessions_dir, &metadata)?;
-    let mut status = SessionStatus {
-        schema_version: SCHEMA_VERSION,
-        session_id,
-        state: SessionState::Starting,
-        audio_position: TimestampUs(0),
-        chunks_written: 0,
-        queue_depth: 0,
-        queue_capacity: QUEUE_CAPACITY,
-        max_queue_depth: 0,
-        segmentation_queue_depth: 0,
-        segmentation_queue_capacity: SEGMENTATION_QUEUE_CAPACITY,
-        max_segmentation_queue_depth: 0,
-        segmentation_replay_required: false,
-        segmentation: SegmentationMetrics::default(),
-        asr_queue_depth: 0,
-        asr_queue_capacity: 0,
-        max_asr_queue_depth: 0,
-        asr_replay_required: false,
-        asr: AsrMetrics::default(),
-        capture: None,
-        applied_control_generation: 0,
-    };
+    let mut status = initial_status(session_id, SessionState::Starting);
 
     let startup_result = (|| -> Result<()> {
         sink.start(session_id, &storage.paths.transcript)?;
@@ -458,6 +437,7 @@ fn run_with_sink_internal(
                     );
                     if last_status_write.elapsed() >= STATUS_WRITE_INTERVAL {
                         storage.write_status(&status)?;
+                        storage.flush_audio()?;
                         last_status_write = Instant::now();
                     }
                     if is_live && last_disk_check.elapsed() >= DISK_CHECK_INTERVAL {
@@ -963,7 +943,7 @@ fn recover_stale_session(sessions_dir: &Path) -> Result<()> {
     let mut status: SessionStatus = if status_path.exists() {
         read_json(status_path)?
     } else {
-        recovery_status(metadata.session_id, metadata.state)
+        initial_status(metadata.session_id, metadata.state)
     };
     if !matches!(
         status.state,
@@ -1004,7 +984,7 @@ fn recover_stale_session(sessions_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn recovery_status(session_id: Uuid, state: SessionState) -> SessionStatus {
+fn initial_status(session_id: Uuid, state: SessionState) -> SessionStatus {
     SessionStatus {
         schema_version: SCHEMA_VERSION,
         session_id,
