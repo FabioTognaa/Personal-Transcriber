@@ -98,8 +98,12 @@ I controlli della milestone corrente sono:
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
+cargo build
 cargo build --release
 ```
+
+La build non ottimizzata finisce in `target/debug/`, quella ottimizzata in
+`target/release/`.
 
 Il test con un modello Whisper reale è ignorato per impostazione predefinita e
 richiede `PERSONAL_TRANSCRIBER_MODEL`:

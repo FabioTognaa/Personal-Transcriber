@@ -6,6 +6,16 @@ restare concettuale e rimandarli qui.
 
 ## Sintassi generale
 
+I comandi seguenti presuppongono che `personal-transcriber` sia installato nel
+sistema con:
+
+```text
+cargo install --path .
+```
+
+In alternativa si possono seguire i comandi di questa sezione senza installare
+`personal-transcriber`, eseguendo direttamente il binario compilato.
+
 ```text
 personal-transcriber <comando> [opzioni]
 ```
@@ -61,16 +71,16 @@ Preset e file documentati:
 
 Flag per impsotare i timing del riconscimento vocale, di seguito le impostazioni di default:
 
-| Opzione                              | Tipo     | Default | Descrizione                                                                     |
-| ------------------------------------ | -------- | ------- | ------------------------------------------------------------------------------- |
-| `--vad-threshold <NUMERO>`           | decimale | `0.02`  | Soglia RMS oltre la quale un chunk è voce.                                      |
-| `--vad-noise-multiplier <NUMERO>`    | decimale | `4.0`   | Quanto la voce deve superare il rumore di fondo stimato per contare come parlato. |
-| `--vad-start-ms <MILLISECONDI>`      | intero   | `60`    | Voce consecutiva necessaria ad aprire un segmento.                              |
-| `--vad-end-ms <MILLISECONDI>`        | intero   | `1600`  | Silenzio consecutivo necessario a chiudere un segmento.                         |
-| `--vad-pre-roll-ms <MILLISECONDI>`   | intero   | `200`   | Audio tenuto prima della prima voce.                                            |
-| `--vad-post-roll-ms <MILLISECONDI>`  | intero   | `200`   | Audio tenuto dopo l'ultima voce.                                                |
-| `--vad-min-speech-ms <MILLISECONDI>` | intero   | `100`   | Sotto questa durata il segmento è scartato (contato in `status.json`).           |
-| `--vad-max-segment-ms <MILLISECONDI>`| intero   | `30000` | Tetto di durata; il parlato più lungo è tagliato sulla pausa più lunga.         |
+| Opzione                               | Tipo     | Default | Descrizione                                                                       |
+| ------------------------------------- | -------- | ------- | --------------------------------------------------------------------------------- |
+| `--vad-threshold <NUMERO>`            | decimale | `0.02`  | Soglia RMS oltre la quale un chunk è voce.                                        |
+| `--vad-noise-multiplier <NUMERO>`     | decimale | `4.0`   | Quanto la voce deve superare il rumore di fondo stimato per contare come parlato. |
+| `--vad-start-ms <MILLISECONDI>`       | intero   | `60`    | Voce consecutiva necessaria ad aprire un segmento.                                |
+| `--vad-end-ms <MILLISECONDI>`         | intero   | `1600`  | Silenzio consecutivo necessario a chiudere un segmento.                           |
+| `--vad-pre-roll-ms <MILLISECONDI>`    | intero   | `200`   | Audio tenuto prima della prima voce.                                              |
+| `--vad-post-roll-ms <MILLISECONDI>`   | intero   | `200`   | Audio tenuto dopo l'ultima voce.                                                  |
+| `--vad-min-speech-ms <MILLISECONDI>`  | intero   | `100`   | Sotto questa durata il segmento è scartato (contato in `status.json`).            |
+| `--vad-max-segment-ms <MILLISECONDI>` | intero   | `30000` | Tetto di durata; il parlato più lungo è tagliato sulla pausa più lunga.           |
 
 ### Inferenza
 
@@ -104,14 +114,14 @@ Verifica i prerequisiti locali senza modificare la configurazione di macOS.
 Restituisce un report JSON; se un prerequisito manca, `ready` è `false` e
 l'exit code è diverso da zero.
 
-| Opzione                     | Tipo     | Default           | Descrizione                                                                                            |
-| --------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------ |
+| Opzione                     | Tipo     | Default                 | Descrizione                                                                                            |
+| --------------------------- | -------- | ----------------------- | ------------------------------------------------------------------------------------------------------ |
 | `--model <PERCORSO>`        | percorso | preset `large-v3-turbo` | Modello da verificare. Ha la precedenza su `--model-preset`.                                           |
 | `--model-preset <NOME>`     | enum     | `large-v3-turbo`        | Preset da verificare se `--model` non è passato.                                                       |
-| `--probe-audio`             | flag     | spento            | Apre entrambi gli input live per tre secondi e verifica che arrivi segnale, senza creare una sessione. |
-| `--microphone <NOME>`       | testo    | input predefinito | Microfono usato dal probe. Richiede `--probe-audio`.                                                   |
-| `--system-audio <NOME>`     | testo    | BlackHole         | Input di sistema usato dal probe. Richiede `--probe-audio`.                                            |
-| `--sessions-dir <PERCORSO>` | percorso | `sessions`        | Directory delle sessioni da verificare.                                                                |
+| `--probe-audio`             | flag     | spento                  | Apre entrambi gli input live per tre secondi e verifica che arrivi segnale, senza creare una sessione. |
+| `--microphone <NOME>`       | testo    | input predefinito       | Microfono usato dal probe. Richiede `--probe-audio`.                                                   |
+| `--system-audio <NOME>`     | testo    | BlackHole               | Input di sistema usato dal probe. Richiede `--probe-audio`.                                            |
+| `--sessions-dir <PERCORSO>` | percorso | `sessions`              | Directory delle sessioni da verificare.                                                                |
 
 Senza `--probe-audio`, permesso del microfono e routing reale restano non
 verificati e il report contiene un avviso.
@@ -139,32 +149,33 @@ personal-transcriber start [opzioni]
 ### `transcribe`
 
 ```text
-personal-transcriber transcribe <FILE> [opzioni]
+personal-transcriber transcribe [FILE] [opzioni]
 ```
 
 Trascrive un file audio esistente, senza registrare e senza conservare audio: in
 `sessions/` nasce una cartella nuova (stesso nome `YY-MM-DD` di `start`) con dentro
 solo `<nome>.txt`. Non sovrascrive mai nulla, perché la cartella è nuova; se la
 trascrizione fallisce non resta niente sul disco. Elabora un solo file per
-invocazione, in un unico thread.
+invocazione, in un unico thread. Se `FILE` è omesso, il percorso viene richiesto su
+un terminale interattivo.
 
 Su un terminale mostra una barra di avanzamento su una riga sola: la percentuale
 già trascritta sul totale, non il tempo rimanente. Con l'output rediretto non
 stampa nulla. I log di whisper.cpp/ggml vanno su standard error e compaiono solo
 con `-v`.
 
-| Argomento/Opzione              | Tipo         | Default            | Descrizione                                    |
-| ------------------------------ | ------------ | ------------------ | ---------------------------------------------- |
-| `<FILE>` (argomento)           | percorso     | richiesto          | Input `.wav`, `.mp3`, `.m4a`, `.mp4` o `.aac`. |
-| `--model <PERCORSO>`           | percorso     | —                  | Vedi “Modello e lingua”.                       |
-| `--model-preset <NOME>`        | enum         | `large-v3-turbo`   | Vedi “Modello e lingua”.                       |
-| `--language <LINGUA>`          | `it` \| `en` | `it`               | Vedi “Modello e lingua”.                       |
-| `--asr-prompt <TESTO>`         | testo        | predefinito lingua | Vedi “Modello e lingua”.                       |
-| `--vad-threshold <NUMERO>`     | decimale     | `0.02`             | Vedi “Segmentazione vocale”.                   |
-| `--vad-start-ms <MS>`          | intero       | `60`               | Vedi “Segmentazione vocale”.                   |
-| `--vad-end-ms <MS>`            | intero       | `1600`             | Vedi “Segmentazione vocale”.                   |
-| `--asr-flash-attention <BOOL>` | booleano     | `true`             | Vedi “Inferenza”.                              |
-| `--sessions-dir <PERCORSO>`    | percorso     | `sessions`         | Directory in cui creare la cartella di output. |
+| Argomento/Opzione              | Tipo         | Default                                      | Descrizione                                    |
+| ------------------------------ | ------------ | -------------------------------------------- | ---------------------------------------------- |
+| `<FILE>` (argomento)           | percorso     | opzionale (richiesto su terminale se omesso) | Input `.wav`, `.mp3`, `.m4a`, `.mp4` o `.aac`. |
+| `--model <PERCORSO>`           | percorso     | —                                            | Vedi “Modello e lingua”.                       |
+| `--model-preset <NOME>`        | enum         | `large-v3-turbo`                             | Vedi “Modello e lingua”.                       |
+| `--language <LINGUA>`          | `it` \| `en` | `it`                                         | Vedi “Modello e lingua”.                       |
+| `--asr-prompt <TESTO>`         | testo        | predefinito lingua                           | Vedi “Modello e lingua”.                       |
+| `--vad-threshold <NUMERO>`     | decimale     | `0.02`                                       | Vedi “Segmentazione vocale”.                   |
+| `--vad-start-ms <MS>`          | intero       | `60`                                         | Vedi “Segmentazione vocale”.                   |
+| `--vad-end-ms <MS>`            | intero       | `1600`                                       | Vedi “Segmentazione vocale”.                   |
+| `--asr-flash-attention <BOOL>` | booleano     | `true`                                       | Vedi “Inferenza”.                              |
+| `--sessions-dir <PERCORSO>`    | percorso     | `sessions`                                   | Directory in cui creare la cartella di output. |
 
 I WAV passano dal lettore in memoria, quindi ereditano il limite di 64 MiB e 30
 minuti; gli altri formati sono decodificati in streaming e non hanno tale
@@ -243,17 +254,17 @@ modificarlo. Rifiuta come destinazione qualsiasi file canonico della sessione.
 | `-o`, `--output <PERCORSO>` | percorso | standard output | File di destinazione. La scrittura è atomica.                               |
 | `--allow-partial`           | flag     | spento          | Consente l'export di una sessione non completata (fallita o ancora attiva). |
 
-## Esempio di una pipeline di utilizzo
+## Comandi per lo sviluppo locale
 
-```sh
-personal-transcriber devices
-personal-transcriber doctor --probe-audio
-personal-transcriber start --language it
-personal-transcriber start --model-preset large-v3-turbo --language it
-personal-transcriber transcribe riunione.mp3 --language @it
-personal-transcriber status
-personal-transcriber pause
-personal-transcriber resume
-personal-transcriber stop
-personal-transcriber export sessions/<sessione> --format srt --output transcript.srt
-```
+Comandi da eseguire dalla radice del repository durante lo sviluppo.
+
+- `cargo fmt --check` — verifica la formattazione senza modificare i file.
+- `cargo fmt` — riformatta il codice sorgente.
+- `cargo clippy --all-targets -- -D warnings` — esegue il linter su tutto il codice e tratta ogni avviso come errore.
+- `cargo test` — esegue la suite di test.
+- `cargo build` — compila la build non ottimizzata in `target/debug/`.
+- `cargo build --release` — compila la build ottimizzata in `target/release/`.
+- `cargo run -- <comando>` — esegue il binario compilato senza installarlo, es. `cargo run -- devices`.
+- `cargo install --path .` — installa `personal-transcriber` nel sistema.
+- `PERSONAL_TRANSCRIBER_MODEL=models/ggml-small-q5_1.bin cargo test real_whisper_model_processes_local_audio -- --ignored` — esegue il test con un modello Whisper reale, ignorato per impostazione predefinita.
+- `cargo run --release --bin asr-benchmark -- <opzioni>` — esegue il benchmark ASR (opzioni in `benchmarks/README.md`).

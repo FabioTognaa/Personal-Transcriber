@@ -42,6 +42,9 @@ pub struct StartOptions {
     pub segmenter: SegmenterConfig,
     pub inference: InferenceConfig,
     pub model_identity: Option<ModelIdentity>,
+    /// Repository name chosen in the start menu; the session directory becomes
+    /// `YY-MM-DD_<name>`. `None` keeps the date-only name (non-interactive runs).
+    pub session_name: Option<String>,
 }
 
 enum SessionAudioSource {
@@ -306,7 +309,11 @@ fn run_with_sink_internal(
             inference: options.inference,
         },
     };
-    let mut storage = SessionStorage::create(&options.sessions_dir, &metadata)?;
+    let mut storage = SessionStorage::create(
+        &options.sessions_dir,
+        &metadata,
+        options.session_name.as_deref(),
+    )?;
     let mut status = initial_status(session_id, SessionState::Starting);
 
     let startup_result = (|| -> Result<()> {

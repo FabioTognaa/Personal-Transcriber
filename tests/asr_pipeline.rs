@@ -126,6 +126,7 @@ fn simulated_english_session_writes_verbatim_canonical_transcript() {
             segmenter: SegmenterConfig::default(),
             inference: inference.clone(),
             model_identity: Some(model.clone()),
+            session_name: None,
         },
         &mut sink,
     )
@@ -240,6 +241,7 @@ fn session_stops_when_the_asr_worker_fails() {
             segmenter,
             inference,
             model_identity: Some(model),
+            session_name: None,
         },
         &mut sink,
     )
@@ -294,6 +296,7 @@ fn segmentation_replay_does_not_duplicate_transcript_ranges() {
             segmenter,
             inference,
             model_identity: Some(model),
+            session_name: None,
         },
         &mut sink,
     )
@@ -361,6 +364,7 @@ fn segmentation_replay_does_not_infer_a_range_twice() {
             segmenter,
             inference,
             model_identity: Some(model),
+            session_name: None,
         },
         &mut sink,
     )

@@ -90,10 +90,14 @@ impl TranscriptWriter {
 }
 
 impl SessionStorage {
-    pub fn create(sessions_dir: &Path, metadata: &SessionMetadata) -> Result<Self> {
+    pub fn create(
+        sessions_dir: &Path,
+        metadata: &SessionMetadata,
+        session_name: Option<&str>,
+    ) -> Result<Self> {
         fs::create_dir_all(sessions_dir)?;
         let sessions_dir = fs::canonicalize(sessions_dir)?;
-        let root = create_session_directory(&sessions_dir, metadata.started_at_unix_ms)?;
+        let root = create_session_directory(&sessions_dir, metadata.started_at_unix_ms, session_name)?;
 
         let paths = SessionPaths::new(root);
         fs::create_dir(&paths.audio)?;
@@ -322,7 +326,10 @@ pub fn unix_time_ms() -> Result<u64> {
     u64::try_from(duration.as_millis()).map_err(|_| Error::TimestampOverflow)
 }
 
-pub(crate) fn session_directory_name(started_at_unix_ms: u64) -> Result<String> {
+pub(crate) fn session_directory_name(
+    started_at_unix_ms: u64,
+    name: Option<&str>,
+) -> Result<String> {
     let seconds =
         i64::try_from(started_at_unix_ms / 1_000).map_err(|_| Error::TimestampOverflow)?;
     let tm = local_broken_down_time(seconds)?;
@@ -332,14 +339,19 @@ pub(crate) fn session_directory_name(started_at_unix_ms: u64) -> Result<String> 
         .ok_or(Error::TimestampOverflow)?
         .rem_euclid(100);
     let month = tm.tm_mon.checked_add(1).ok_or(Error::TimestampOverflow)?;
-    Ok(format!("{year:02}-{month:02}-{mday:02}", mday = tm.tm_mday))
+    let date = format!("{year:02}-{month:02}-{mday:02}", mday = tm.tm_mday);
+    Ok(match name {
+        Some(name) => format!("{date}_{name}"),
+        None => date,
+    })
 }
 
 pub(crate) fn create_session_directory(
     sessions_dir: &Path,
     started_at_unix_ms: u64,
+    name: Option<&str>,
 ) -> Result<PathBuf> {
-    let base = session_directory_name(started_at_unix_ms)?;
+    let base = session_directory_name(started_at_unix_ms, name)?;
     for attempt in 1u32..=1_000 {
         let name = if attempt == 1 {
             base.clone()
@@ -381,7 +393,8 @@ mod tests {
 
     #[test]
     fn session_directory_name_matches_local_start_timestamp() {
-        let name = session_directory_name(1_760_000_000_000).expect("name should format");
+        let name =
+            session_directory_name(1_760_000_000_000, None).expect("name should format");
         assert!(
             is_session_directory_name(&name),
             "unexpected session directory name {name}"
@@ -389,11 +402,22 @@ mod tests {
     }
 
     #[test]
+    fn session_directory_name_appends_the_repo_name() {
+        let date = session_directory_name(1_760_000_000_000, None).expect("date should format");
+        let named =
+            session_directory_name(1_760_000_000_000, Some("my_repo")).expect("name should format");
+
+        assert_eq!(named, format!("{date}_my_repo"));
+    }
+
+    #[test]
     fn session_directory_uses_local_start_and_avoids_collisions() {
         let temporary = tempfile::tempdir().expect("temporary directory should be created");
         let metadata = file_metadata();
-        let first = SessionStorage::create(temporary.path(), &metadata).expect("first session");
-        let second = SessionStorage::create(temporary.path(), &metadata).expect("second session");
+        let first =
+            SessionStorage::create(temporary.path(), &metadata, None).expect("first session");
+        let second =
+            SessionStorage::create(temporary.path(), &metadata, None).expect("second session");
         let first_name = first
             .paths
             .root
@@ -427,7 +451,7 @@ mod tests {
             config,
         };
         let mut storage =
-            SessionStorage::create(temporary.path(), &metadata).expect("storage should open");
+            SessionStorage::create(temporary.path(), &metadata, None).expect("storage should open");
         storage
             .write_live_audio(
                 &chunk(AudioSourceKind::Microphone, 0.25),
@@ -482,7 +506,7 @@ mod tests {
             ended_at_unix_ms: None,
             config: SessionConfig::italian(Some(PathBuf::from("fixture.wav"))),
         };
-        let storage = SessionStorage::create(&relative, &metadata)
+        let storage = SessionStorage::create(&relative, &metadata, None)
             .expect("relative sessions directory should work");
         let current: CurrentSession = read_json(&relative.join(CURRENT_SESSION_FILE))
             .expect("current session should be readable");

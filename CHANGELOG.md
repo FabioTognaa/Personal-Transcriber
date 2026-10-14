@@ -7,6 +7,15 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
 ## [Unreleased]
 
+### Added
+
+- `start` e `transcribe` chiedono il nome della repo prima del modello e nominano
+  la cartella `YY-MM-DD_<repo>`: gli spazi diventano `_`, i caratteri non validi
+  (`/ : * ? " < > |`) e i nomi già usati vengono segnalati e richiesti di nuovo,
+  `q` annulla come nel menù del modello. `transcribe` chiede anche il percorso del
+  file audio quando non è passato sulla riga di comando. Senza terminale
+  interattivo resta il nome `YY-MM-DD`.
+
 ## [1.0.0] - 2026-10-13
 
 ### Added

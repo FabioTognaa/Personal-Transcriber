@@ -279,7 +279,8 @@ fn stale_active_session_and_lock_file_are_recovered_after_a_crash() {
         config: SessionConfig::italian(None),
     };
     let storage =
-        SessionStorage::create(&sessions_dir, &metadata).expect("stale storage should be created");
+        SessionStorage::create(&sessions_dir, &metadata, None)
+            .expect("stale storage should be created");
     let stale_root = storage.paths.root.clone();
     storage
         .write_status(&SessionStatus {
@@ -334,7 +335,8 @@ fn stale_starting_session_without_status_is_recovered() {
         config: SessionConfig::italian(None),
     };
     let storage =
-        SessionStorage::create(&sessions_dir, &metadata).expect("stale storage should be created");
+        SessionStorage::create(&sessions_dir, &metadata, None)
+            .expect("stale storage should be created");
     let stale_root = storage.paths.root.clone();
     drop(storage);
 
@@ -438,6 +440,7 @@ fn options(sessions_dir: PathBuf) -> StartOptions {
         segmenter: SegmenterConfig::default(),
         inference: InferenceConfig::default(),
         model_identity: None,
+        session_name: None,
     }
 }
 

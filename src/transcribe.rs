@@ -17,11 +17,15 @@ pub struct TranscribeOptions {
     pub language: String,
     pub segmenter: SegmenterConfig,
     pub inference: InferenceConfig,
+    /// Repository name chosen in the start menu; the transcript directory becomes
+    /// `YY-MM-DD_<name>`. `None` keeps the date-only name (non-interactive runs).
+    pub session_name: Option<String>,
 }
 
 /// One-shot transcription of an existing audio file. Unlike `start` it stores no
 /// audio and creates no session: the transcript is written as `<stem>.txt` inside a
-/// fresh, inert directory under `sessions_dir`, named after the day the run started.
+/// fresh, inert directory under `sessions_dir`, named after the day the run started
+/// (`YY-MM-DD` or `YY-MM-DD_<repo>` when a name was chosen interactively).
 pub fn run(options: TranscribeOptions) -> Result<()> {
     crate::session::validate_language(&options.language)?;
     validate_inference_config(&options.inference)?;
@@ -48,8 +52,11 @@ pub fn run(options: TranscribeOptions) -> Result<()> {
     // The directory is allocated only once the transcript is in hand, so a failure
     // above leaves nothing behind.
     std::fs::create_dir_all(&options.sessions_dir)?;
-    let directory =
-        crate::storage::create_session_directory(&options.sessions_dir, started_at_unix_ms)?;
+    let directory = crate::storage::create_session_directory(
+        &options.sessions_dir,
+        started_at_unix_ms,
+        options.session_name.as_deref(),
+    )?;
     let txt_path = write_transcript(&directory, &options.input, &lines)?;
     println!("{}", txt_path.display());
     Ok(())
@@ -504,6 +511,7 @@ mod tests {
             language: "it".to_owned(),
             segmenter: SegmenterConfig::default(),
             inference: InferenceConfig::default(),
+            session_name: None,
         })
         .expect_err("a missing model must fail the run");
 
