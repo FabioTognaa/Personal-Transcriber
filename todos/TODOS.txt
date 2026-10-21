@@ -21,3 +21,18 @@ problema A:
 - se in /session c'è già una cartella con il nome scritto viene segnalato e chiesto un altro nome
 - durante la scrittura del nome, come per la scelta del modello, se si digita 'q' e si invia si quitta il comando start
 - dopo il nome accettabile deve venire chiesto il modello esattamente come ora
+
+
+• feature inattività: se si registra silenzio consecutivo per oltre un minutaggio prestabilito si chiude la sessione in automatico
+- riservata a start
+- il valore del minutaggio è selezionabile tramite flag --silence-timeout dedicato per ogni sessione
+- vincoli dei valori assegnabili al flag: numero (da intendere in minuti) intero compreso tra 1 e 30; valore di default: 15
+
+
+• test rosso in CI: `inference_failure_stops_capture_and_marks_the_session_failed` (tests/session_lifecycle.rs)
+- cosa fa: avvia una sessione con il sink finto `FailingAcceptSink`, che al primo segmento restituisce `Error::Asr("intentional inference failure")`
+- cosa verifica: che `run_with_sink` si fermi restituendo esattamente quell'errore, che lo stato sia `Failed` e che l'audio sia già su disco
+- cosa succede: fallisce in CI sull'assert alla riga 260 (`matches!(error, Error::Asr(message) if message == "intentional inference failure")`): l'errore che arriva non è quello atteso (variante o messaggio diverso)
+- sospetto: `run_with_sink` incapsula/sostituisce l'errore del sink prima di propagarlo, oppure il test è troppo rigido sul messaggio esatto; da riprodurre in locale per leggere l'errore reale
+- il test gemello `startup_failure_finalizes_files_and_marks_the_session_failed` passa perché controlla solo `Error::Asr(_)`, senza il messaggio
+- è questo, non il formatter, a rendere rosse tutte le run recenti (main, v1.0.0, dev/*): Format e Lint passano, si ferma Test
