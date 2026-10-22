@@ -558,9 +558,9 @@ fn default_model_path() -> PathBuf {
     ModelPreset::LargeV3Turbo.default_path()
 }
 
-/// Characters that make a session name unusable; the user is asked again.
-/// Space is allowed and normalized to `_` before this check.
-const SESSION_NAME_INVALID_CHARS: [char; 8] = ['/', ':', '*', '?', '"', '<', '>', '|'];
+/// Characters that make a session name unusable on any supported platform; the
+/// user is asked again. Space is allowed and normalized to `_` before this check.
+const SESSION_NAME_INVALID_CHARS: [char; 9] = ['/', '\\', ':', '*', '?', '"', '<', '>', '|'];
 
 /// Normalize a typed session name (trim, spaces to `_`) and reject an empty
 /// result or one containing a forbidden character.
@@ -570,7 +570,7 @@ fn clean_session_name(input: &str) -> std::result::Result<String, &'static str> 
         return Err("inserisci un nome");
     }
     if name.contains(SESSION_NAME_INVALID_CHARS) {
-        return Err("i caratteri / : * ? \" < > | non sono consentiti");
+        return Err("i caratteri / \\ : * ? \" < > | non sono consentiti");
     }
     Ok(name)
 }
@@ -805,6 +805,7 @@ mod tests {
         assert_eq!(clean_session_name("  my repo  ").as_deref(), Ok("my_repo"));
         assert!(clean_session_name("/etc/passwd").is_err());
         assert!(clean_session_name("weird:name*").is_err());
+        assert!(clean_session_name("back\\slash").is_err());
         assert!(clean_session_name("   ").is_err());
     }
 

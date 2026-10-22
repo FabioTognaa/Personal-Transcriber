@@ -13,6 +13,12 @@ sistema con:
 cargo install --path .
 ```
 
+È possibile disinstallarlo in ogni momento con:
+
+```text
+cargo uninstall <nome-package>.
+```
+
 In alternativa si possono seguire i comandi di questa sezione senza installare
 `personal-transcriber`, eseguendo direttamente il binario compilato.
 
@@ -268,3 +274,17 @@ Comandi da eseguire dalla radice del repository durante lo sviluppo.
 - `cargo install --path .` — installa `personal-transcriber` nel sistema.
 - `PERSONAL_TRANSCRIBER_MODEL=models/ggml-small-q5_1.bin cargo test real_whisper_model_processes_local_audio -- --ignored` — esegue il test con un modello Whisper reale, ignorato per impostazione predefinita.
 - `cargo run --release --bin asr-benchmark -- <opzioni>` — esegue il benchmark ASR (opzioni in `benchmarks/README.md`).
+
+controlli della milestone corrente sono:
+
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+cargo build
+cargo build --release
+La build non ottimizzata finisce in target/debug/, quella ottimizzata in target/release/.
+
+Il test con un modello Whisper reale è ignorato per impostazione predefinita e richiede PERSONAL_TRANSCRIBER_MODEL:
+
+PERSONAL_TRANSCRIBER_MODEL=models/ggml-small-q5_1.bin \
+ cargo test real_whisper_model_processes_local_audio -- --ignored

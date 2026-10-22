@@ -5,7 +5,7 @@
 /sessions/*
 !/sessions/README.md
 /models/
-TODO.txt
+/todos/
 PROJECT_CONTEXT.md
 
 # Local IDE and editor files

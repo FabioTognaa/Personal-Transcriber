@@ -57,13 +57,6 @@ Esempio di utilizzo:
 cargo run --release -- start --model-preset large-v3-turbo --language it
 ```
 
-| Preset           | File                           | Dimensione | Uso consigliato            |
-| ---------------- | ------------------------------ | ---------: | -------------------------- |
-| `small`          | `ggml-small-q5_1.bin`          |    ~190 MB | predefinito, molto veloce  |
-| `medium`         | `ggml-medium-q5_0.bin`         |    ~540 MB | via di mezzo               |
-| `large-v3-turbo` | `ggml-large-v3-turbo-q8_0.bin` |    ~874 MB | migliore qualità/velocità  |
-| `large-v3`       | `ggml-large-v3-q5_0.bin`       |    ~1,1 GB | qualità massima, più lento |
-
 Su Apple Silicon con almeno 16 GiB, `large-v3-turbo` e `large-v3` restano sotto
 il real-time factor 1 con margine ampio; le versioni F16 (`ggml-large-v3-turbo.bin`,
 `ggml-large-v3.bin`) sono selezionabili con `--model` per la massima accuratezza.
