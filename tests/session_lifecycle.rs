@@ -278,9 +278,8 @@ fn stale_active_session_and_lock_file_are_recovered_after_a_crash() {
         ended_at_unix_ms: None,
         config: SessionConfig::italian(None),
     };
-    let storage =
-        SessionStorage::create(&sessions_dir, &metadata, None)
-            .expect("stale storage should be created");
+    let storage = SessionStorage::create(&sessions_dir, &metadata, None)
+        .expect("stale storage should be created");
     let stale_root = storage.paths.root.clone();
     storage
         .write_status(&SessionStatus {
@@ -334,9 +333,8 @@ fn stale_starting_session_without_status_is_recovered() {
         ended_at_unix_ms: None,
         config: SessionConfig::italian(None),
     };
-    let storage =
-        SessionStorage::create(&sessions_dir, &metadata, None)
-            .expect("stale storage should be created");
+    let storage = SessionStorage::create(&sessions_dir, &metadata, None)
+        .expect("stale storage should be created");
     let stale_root = storage.paths.root.clone();
     drop(storage);
 
@@ -429,6 +427,88 @@ fn concurrent_pause_and_stop_cannot_falsely_acknowledge_stop() {
     );
 }
 
+#[test]
+fn silence_timeout_closes_the_session_and_records_the_reason() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let sessions_dir = temporary.path().join("sessions");
+    let input = temporary.path().join("silence.wav");
+    write_silent_wav(&input, 1_500);
+
+    let mut start_options = options(sessions_dir.clone());
+    start_options.input_wav = Some(input);
+    start_options.silence_timeout = Some(Duration::from_millis(300));
+
+    let root = session::run_with_sink(start_options, &mut NullSegmentSink)
+        .expect("silence timeout should complete the session");
+    let status = control::current_status(&sessions_dir).expect("status should be readable");
+    let events = read_events(&root.join(EVENTS_FILE));
+
+    assert_eq!(status.state, SessionState::Completed);
+    assert!(status.audio_position < TimestampUs(1_500_000));
+    assert!(wav_samples(&root.join("audio").join(MIXED_AUDIO_FILE)) > 0);
+    assert!(matches!(
+        events.get(events.len().saturating_sub(2)),
+        Some(SessionEvent::SilenceTimeout { at, .. }) if *at < TimestampUs(1_500_000)
+    ));
+    assert!(matches!(
+        events.last(),
+        Some(SessionEvent::SessionStopped { .. })
+    ));
+}
+
+#[test]
+fn silence_timeout_also_closes_a_paused_session() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let sessions_dir = temporary.path().join("sessions");
+    let input = temporary.path().join("silence.wav");
+    write_silent_wav(&input, 2_000);
+
+    let mut start_options = options(sessions_dir.clone());
+    start_options.input_wav = Some(input);
+    start_options.silence_timeout = Some(Duration::from_millis(800));
+    let worker = thread::spawn(move || session::run_with_sink(start_options, &mut NullSegmentSink));
+
+    wait_for_position(&sessions_dir, 100_000);
+    let paused = control::request(&sessions_dir, ControlAction::Pause)
+        .expect("pause should be acknowledged");
+    assert_eq!(paused.state, SessionState::TranscriptionPaused);
+
+    let root = worker
+        .join()
+        .expect("session worker should not panic")
+        .expect("a paused session should still auto-close");
+    let status = control::current_status(&sessions_dir).expect("status should be readable");
+    let events = read_events(&root.join(EVENTS_FILE));
+
+    assert_eq!(status.state, SessionState::Completed);
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::TranscriptionPaused { .. }))
+    );
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, SessionEvent::SilenceTimeout { .. }))
+    );
+}
+
+fn write_silent_wav(path: &Path, duration_ms: u32) {
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate: 16_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).expect("silent WAV should be created");
+    for _ in 0..(16_000 * duration_ms / 1_000) {
+        writer
+            .write_sample(0_i16)
+            .expect("silence should be written");
+    }
+    writer.finalize().expect("silent WAV should finalize");
+}
+
 fn options(sessions_dir: PathBuf) -> StartOptions {
     StartOptions {
         sessions_dir,
@@ -441,6 +521,7 @@ fn options(sessions_dir: PathBuf) -> StartOptions {
         inference: InferenceConfig::default(),
         model_identity: None,
         session_name: None,
+        silence_timeout: None,
     }
 }
 

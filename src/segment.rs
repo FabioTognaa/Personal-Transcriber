@@ -376,7 +376,7 @@ fn validate_config(config: &SegmenterConfig) -> Result<()> {
     Ok(())
 }
 
-fn rms(samples: &[f32]) -> f32 {
+pub(crate) fn rms(samples: &[f32]) -> f32 {
     if samples.is_empty() {
         return 0.0;
     }

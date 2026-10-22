@@ -142,6 +142,7 @@ personal-transcriber start [opzioni]
 | ------------------------------ | ------------ | ------------------ | ------------------------------------ |
 | `--microphone <NOME>`          | testo        | input predefinito  | Dispositivo del microfono.           |
 | `--system-audio <NOME>`        | testo        | BlackHole rilevato | Dispositivo dell'audio di sistema.   |
+| `--silence-timeout <MINUTI>`   | intero 1–30  | `15`               | Chiude la sessione dopo N minuti di silenzio consecutivo. |
 | `--model <PERCORSO>`           | percorso     | —                  | Vedi “Modello e lingua”.             |
 | `--model-preset <NOME>`        | enum         | `large-v3-turbo`   | Vedi “Modello e lingua”.             |
 | `--language <LINGUA>`          | `it` \| `en` | `it`               | Vedi “Modello e lingua”.             |
@@ -151,6 +152,12 @@ personal-transcriber start [opzioni]
 | `--vad-end-ms <MS>`            | intero       | `1600`             | Vedi “Segmentazione vocale”.         |
 | `--asr-flash-attention <BOOL>` | booleano     | `true`             | Vedi “Inferenza”.                    |
 | `--sessions-dir <PERCORSO>`    | percorso     | `sessions`         | Directory in cui creare la sessione. |
+
+Con `--silence-timeout` la sessione si chiude da sola dopo N minuti consecutivi di
+silenzio. Il conteggio è in tempo audio e non si ferma con `pause`: vale la soglia
+`--vad-threshold` sul mix, la chiusura è la stessa di `stop` (stato `completed`) e
+l'evento `silence_timeout` in `events.jsonl` ne conserva il motivo. Un valore fuori
+da 1–30 o non intero viene rifiutato da clap con un errore in inglese.
 
 ### `transcribe`
 

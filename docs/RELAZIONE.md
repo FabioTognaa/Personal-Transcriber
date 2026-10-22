@@ -263,6 +263,11 @@ Il loop di `start` applica il comando solo se lo stato lo consente.
 - `resume` fa l'inverso. Il buco di pausa non viene attraversato da un segmento.
 - `stop` porta a `stopping`. La sorgente smette di produrre. I chunk già in coda
   vengono ancora scritti e, se si era in `running`, anche segmentati. Poi si chiude.
+- Il timeout di inattività di `start` (`--silence-timeout`, default 15 minuti) usa
+  la stessa chiusura di `stop`, anche con la trascrizione in pausa: conta il
+  silenzio in tempo audio con la soglia `--vad-threshold` sul mix, scrive l'evento
+  `silence_timeout` e lascia la sessione `completed`. Una riga su stderr annuncia
+  la chiusura automatica.
 - Un secondo `stop` su una sessione già `completed` non rifà il lavoro: restituisce
   lo stato com'è. Su una sessione `failed` i comandi di controllo sono rifiutati.
 
@@ -286,7 +291,7 @@ esce da quella directory viene rifiutato.
 sessions/YY-MM-DD/
   session.json        chi, quando, con quale configurazione
   status.json         fotografia aggiornata mentre gira, e stato finale
-  events.jsonl        avvio, pause, riprese, stop, errori
+  events.jsonl        avvio, pause, riprese, stop, timeout di silenzio, errori
   transcript.jsonl    solo segmenti finali, una riga JSON ciascuno
   control.json        ultimo comando richiesto dall'esterno
   audio/mixed.wav     ciò che è stato trascritto

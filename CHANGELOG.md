@@ -15,6 +15,10 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
   `q` annulla come nel menù del modello. `transcribe` chiede anche il percorso del
   file audio quando non è passato sulla riga di comando. Senza terminale
   interattivo resta il nome `YY-MM-DD`.
+- `start` chiude da solo la sessione dopo N minuti consecutivi di silenzio
+  (`--silence-timeout`, intero 1–30, default 15): conta il tempo audio, non si
+  ferma durante `pause`, registra l'evento `silence_timeout` e lascia la sessione
+  `completed`. La chiusura automatica è annunciata su stderr in inglese.
 
 ## [1.0.0] - 2026-10-13
 

@@ -1,5 +1,6 @@
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
@@ -93,6 +94,10 @@ pub struct StartArgs {
     /// Input device used for remote/system audio, normally BlackHole on macOS.
     #[arg(long)]
     pub system_audio: Option<String>,
+
+    /// Minutes of consecutive silence after which the session closes itself.
+    #[arg(long, default_value_t = 15, value_parser = clap::value_parser!(u64).range(1..=30))]
+    pub silence_timeout: u64,
 
     #[command(flatten)]
     pub model: ModelArgs,
@@ -260,7 +265,8 @@ pub fn execute(command: Command) -> Result<()> {
             }
         }
         Command::Start(args) => {
-            let session_name = match select_session_name_interactively(&args.sessions.sessions_dir) {
+            let session_name = match select_session_name_interactively(&args.sessions.sessions_dir)
+            {
                 NamePick::Use(name) => Some(name),
                 NamePick::Skipped => None,
                 NamePick::Cancelled => return Ok(()),
@@ -281,12 +287,14 @@ pub fn execute(command: Command) -> Result<()> {
                 inference: inference_config(&args.inference, prompt),
                 model_identity: None,
                 session_name,
+                silence_timeout: Some(Duration::from_secs(args.silence_timeout * 60)),
             })?;
             println!("{}", root.display());
             Ok(())
         }
         Command::Transcribe(args) => {
-            let session_name = match select_session_name_interactively(&args.sessions.sessions_dir) {
+            let session_name = match select_session_name_interactively(&args.sessions.sessions_dir)
+            {
                 NamePick::Use(name) => Some(name),
                 NamePick::Skipped => None,
                 NamePick::Cancelled => return Ok(()),
@@ -578,11 +586,9 @@ fn clean_session_name(input: &str) -> std::result::Result<String, &'static str> 
 /// Where `start` would place the session for `name` right now, for the
 /// "already exists" check. `None` when the clock cannot be read.
 fn candidate_session_directory(sessions_dir: &Path, name: &str) -> Option<PathBuf> {
-    let directory_name = crate::storage::session_directory_name(
-        crate::storage::unix_time_ms().ok()?,
-        Some(name),
-    )
-    .ok()?;
+    let directory_name =
+        crate::storage::session_directory_name(crate::storage::unix_time_ms().ok()?, Some(name))
+            .ok()?;
     Some(sessions_dir.join(directory_name))
 }
 
@@ -850,6 +856,36 @@ mod tests {
             resolve_initial_prompt(Some("glossario".to_owned()), "it"),
             Some("glossario".to_owned())
         );
+    }
+
+    #[test]
+    fn silence_timeout_defaults_to_fifteen_minutes_and_only_accepts_one_to_thirty() {
+        let cli = Cli::try_parse_from([
+            "personal-transcriber",
+            "start",
+            "--model",
+            "models/fixture.bin",
+        ])
+        .expect("start command should parse");
+        let Command::Start(args) = cli.command else {
+            panic!("expected start command");
+        };
+        assert_eq!(args.silence_timeout, 15);
+
+        let cli = Cli::try_parse_from(["personal-transcriber", "start", "--silence-timeout", "30"])
+            .expect("30 minutes should be accepted");
+        let Command::Start(args) = cli.command else {
+            panic!("expected start command");
+        };
+        assert_eq!(args.silence_timeout, 30);
+
+        for value in ["0", "31", "-1", "1.5", "abc"] {
+            assert!(
+                Cli::try_parse_from(["personal-transcriber", "start", "--silence-timeout", value])
+                    .is_err(),
+                "{value} must be rejected"
+            );
+        }
     }
 
     #[test]

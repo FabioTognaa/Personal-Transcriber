@@ -97,7 +97,8 @@ impl SessionStorage {
     ) -> Result<Self> {
         fs::create_dir_all(sessions_dir)?;
         let sessions_dir = fs::canonicalize(sessions_dir)?;
-        let root = create_session_directory(&sessions_dir, metadata.started_at_unix_ms, session_name)?;
+        let root =
+            create_session_directory(&sessions_dir, metadata.started_at_unix_ms, session_name)?;
 
         let paths = SessionPaths::new(root);
         fs::create_dir(&paths.audio)?;
@@ -393,8 +394,7 @@ mod tests {
 
     #[test]
     fn session_directory_name_matches_local_start_timestamp() {
-        let name =
-            session_directory_name(1_760_000_000_000, None).expect("name should format");
+        let name = session_directory_name(1_760_000_000_000, None).expect("name should format");
         assert!(
             is_session_directory_name(&name),
             "unexpected session directory name {name}"

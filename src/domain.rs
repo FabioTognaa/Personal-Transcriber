@@ -221,6 +221,10 @@ pub struct SessionConfig {
     pub system_device: Option<String>,
     pub sample_rate_hz: u32,
     pub channels: u16,
+    /// Consecutive silence that closes a live session automatically, in
+    /// milliseconds. `None` disables the watchdog. Added after schema version 4.
+    #[serde(default)]
+    pub silence_timeout_ms: Option<u64>,
     pub segmenter: SegmenterConfig,
     pub inference: InferenceConfig,
 }
@@ -237,6 +241,7 @@ impl SessionConfig {
             system_device: None,
             sample_rate_hz: TARGET_SAMPLE_RATE_HZ,
             channels: TARGET_CHANNELS,
+            silence_timeout_ms: None,
             segmenter: SegmenterConfig::default(),
             inference: InferenceConfig::default(),
         }
@@ -291,6 +296,13 @@ pub enum SessionEvent {
         at: TimestampUs,
     },
     SessionStopped {
+        schema_version: u32,
+        session_id: Uuid,
+        at: TimestampUs,
+    },
+    /// The session closed itself because consecutive silence reached
+    /// `SessionConfig::silence_timeout_ms`.
+    SilenceTimeout {
         schema_version: u32,
         session_id: Uuid,
         at: TimestampUs,

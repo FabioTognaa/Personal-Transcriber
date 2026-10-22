@@ -17,7 +17,7 @@ use crate::domain::{
 };
 use crate::live_audio::{LiveAudioChunk, LiveAudioConfig};
 use crate::schema::{CURRENT_SESSION_FILE, SCHEMA_VERSION};
-use crate::segment::Segmenter;
+use crate::segment::{Segmenter, rms};
 use crate::storage::{
     CurrentSession, ExclusiveFileLock, SessionStorage, atomic_write_json, read_json,
     repair_jsonl_tail, unix_time_ms,
@@ -45,6 +45,9 @@ pub struct StartOptions {
     /// Repository name chosen in the start menu; the session directory becomes
     /// `YY-MM-DD_<name>`. `None` keeps the date-only name (non-interactive runs).
     pub session_name: Option<String>,
+    /// Live sessions only: close the session after this much consecutive
+    /// silence. `None` disables the watchdog (`transcribe`, tests).
+    pub silence_timeout: Option<Duration>,
 }
 
 enum SessionAudioSource {
@@ -160,6 +163,45 @@ struct ShutdownOnDrop(Arc<AtomicBool>);
 impl Drop for ShutdownOnDrop {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Consecutive-silence watchdog for live sessions. Silence is measured in audio
+/// time, not wall time. A voiced chunk clears the count only once the voice
+/// lasts `voice_trigger`, the same rule the segmenter uses to open a segment,
+/// so an isolated click cannot keep a silent session alive.
+struct SilenceWatcher {
+    threshold: f32,
+    voice_trigger: Duration,
+    timeout: Duration,
+    silence: Duration,
+    voice_run: Duration,
+}
+
+impl SilenceWatcher {
+    fn new(timeout: Duration, threshold: f32, voice_trigger_ms: u64) -> Self {
+        Self {
+            threshold,
+            voice_trigger: Duration::from_millis(voice_trigger_ms),
+            timeout,
+            silence: Duration::ZERO,
+            voice_run: Duration::ZERO,
+        }
+    }
+
+    /// Returns true once `timeout` of consecutive silence has elapsed.
+    fn push(&mut self, chunk: &PcmChunk) -> bool {
+        let duration = Duration::from_micros(chunk.duration_us());
+        if rms(&chunk.samples) >= self.threshold {
+            self.voice_run += duration;
+            if self.voice_run >= self.voice_trigger {
+                self.silence = Duration::ZERO;
+            }
+        } else {
+            self.voice_run = Duration::ZERO;
+            self.silence += duration;
+        }
+        self.silence >= self.timeout
     }
 }
 
@@ -305,6 +347,9 @@ fn run_with_sink_internal(
             system_device: system_name,
             sample_rate_hz: crate::domain::TARGET_SAMPLE_RATE_HZ,
             channels: crate::domain::TARGET_CHANNELS,
+            silence_timeout_ms: options
+                .silence_timeout
+                .map(|timeout| u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX)),
             segmenter: options.segmenter,
             inference: options.inference,
         },
@@ -343,6 +388,13 @@ fn run_with_sink_internal(
     let source_shutdown = Arc::new(AtomicBool::new(false));
     let mut last_status_write = Instant::now();
     let mut last_disk_check = Instant::now();
+    let mut silence_watcher = options.silence_timeout.map(|timeout| {
+        SilenceWatcher::new(
+            timeout,
+            segmenter_config.energy_threshold,
+            segmenter_config.start_trigger_ms,
+        )
+    });
     let mut interrupted = false;
     let processing_result = thread::scope(|scope| -> Result<()> {
         let _source_shutdown_guard = ShutdownOnDrop(Arc::clone(&source_shutdown));
@@ -433,6 +485,29 @@ fn run_with_sink_internal(
                         }
                     }
                     update_status_for_chunk(&mut status, &chunk);
+                    let timeout = silence_watcher
+                        .as_mut()
+                        .and_then(|watcher| watcher.push(&chunk).then_some(watcher.timeout));
+                    if let Some(timeout) = timeout {
+                        // Same clean shutdown as `stop`, also when the
+                        // transcription was paused: the audio is still recorded.
+                        segment_drain = status.state == SessionState::Running;
+                        status.state = SessionState::Stopping;
+                        metadata.state = SessionState::Stopping;
+                        storage.append_event(&SessionEvent::SilenceTimeout {
+                            schema_version: SCHEMA_VERSION,
+                            session_id,
+                            at: status.audio_position,
+                        })?;
+                        storage.write_metadata(&metadata)?;
+                        storage.write_status(&status)?;
+                        tracing::warn!(
+                            "session closed automatically after {} minutes of silence",
+                            timeout.as_secs_f64() / 60.0
+                        );
+                        source_shutdown.store(true, Ordering::Relaxed);
+                        break;
+                    }
                     refresh_queue_status(
                         &mut status,
                         receiver.len(),
@@ -1032,9 +1107,13 @@ impl RunnerGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::{best_effort_identity, validate_language};
+    use super::{SilenceWatcher, best_effort_identity, validate_language};
     use crate::Error;
+    use crate::domain::{
+        AudioSourceKind, PcmChunk, TARGET_CHANNELS, TARGET_SAMPLE_RATE_HZ, TimestampUs,
+    };
     use std::path::Path;
+    use std::time::Duration;
 
     #[test]
     fn supported_languages_are_accepted() {
@@ -1056,5 +1135,42 @@ mod tests {
         let error = validate_language("fr").expect_err("French should not be supported");
 
         assert!(matches!(error, Error::UnsupportedLanguage(language) if language == "fr"));
+    }
+
+    #[test]
+    fn silence_watcher_fires_only_after_the_whole_timeout() {
+        let mut watcher = SilenceWatcher::new(Duration::from_millis(300), 0.02, 60);
+        for index in 0..14 {
+            assert!(!watcher.push(&chunk(index, 0.0)));
+        }
+        // A 20 ms blip is shorter than the 60 ms voice trigger: it neither
+        // counts as silence nor resets the count.
+        assert!(!watcher.push(&chunk(14, 0.5)));
+        assert!(watcher.push(&chunk(15, 0.0)));
+    }
+
+    #[test]
+    fn sustained_voice_resets_the_silence_watcher() {
+        let mut watcher = SilenceWatcher::new(Duration::from_millis(300), 0.02, 60);
+        for index in 0..10 {
+            assert!(!watcher.push(&chunk(index, 0.0)));
+        }
+        for index in 10..13 {
+            assert!(!watcher.push(&chunk(index, 0.5)));
+        }
+        for index in 13..27 {
+            assert!(!watcher.push(&chunk(index, 0.0)));
+        }
+        assert!(watcher.push(&chunk(27, 0.0)));
+    }
+
+    fn chunk(index: u64, level: f32) -> PcmChunk {
+        PcmChunk {
+            source: AudioSourceKind::Mixed,
+            start: TimestampUs(index * 20_000),
+            sample_rate_hz: TARGET_SAMPLE_RATE_HZ,
+            channels: TARGET_CHANNELS,
+            samples: vec![level; 320],
+        }
     }
 }
