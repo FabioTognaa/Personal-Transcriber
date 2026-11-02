@@ -1,4 +1,4 @@
-# Come funziona personal-transcriber
+# Come funziona scrib
 
 Questo documento spiega il programma a chi non lo ha mai visto: che problema risolve,
 con quali pezzi è costruito, e cosa fa davvero dal momento in cui si lancia un
@@ -10,7 +10,7 @@ di prodotto resta [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md).
 
 ## Cosa fa
 
-`personal-transcriber` è un programma da terminale. Durante una riunione registra sul Mac
+`scrib` è un programma da terminale. Durante una riunione registra sul Mac
 due audio — il microfono di chi parla e l'audio degli altri, letto tramite BlackHole —
 li mescola, e scrive in italiano o inglese il testo di ciò che è stato detto.
 Tutto questo viene fatto in locale al 100%.

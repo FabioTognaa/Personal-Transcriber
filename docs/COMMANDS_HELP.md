@@ -1,13 +1,13 @@
 # Comandi e opzioni
 
-Riferimento completo della riga di comando di `personal-transcriber`. Elenca
+Riferimento completo della riga di comando di `scrib`. Elenca
 ogni comando e ogni opzione con valore, default e vincoli, così il README può
 restare concettuale e rimandarli qui.
 
 ## Sintassi generale
 
 ```text
-personal-transcriber <comando> [opzioni]
+scrib <comando> [opzioni]
 ```
 
 Il binario esegue un solo comando per invocazione e resta in primo piano fino
@@ -80,7 +80,7 @@ L'unico flag dispnibile è quello della flash attention attivato di default. Per
 ### `devices`
 
 ```text
-personal-transcriber devices
+scrib devices
 ```
 
 Elenca in JSON i dispositivi audio visibili, con direzione supportata e
@@ -90,7 +90,7 @@ quelle globali.
 ### `doctor`
 
 ```text
-personal-transcriber doctor [opzioni]
+scrib doctor [opzioni]
 ```
 
 Verifica i prerequisiti locali senza modificare la configurazione di macOS.
@@ -112,7 +112,7 @@ verificati e il report contiene un avviso.
 ### `start`
 
 ```text
-personal-transcriber start [opzioni]
+scrib start [opzioni]
 ```
 
 | Opzione                        | Tipo         | Default            | Descrizione                          |
@@ -142,7 +142,7 @@ la stessa di `stop` (stato `completed`) e l'evento `silence_timeout` in
 ### `transcribe`
 
 ```text
-personal-transcriber transcribe [FILE] [opzioni]
+scrib transcribe [FILE] [opzioni]
 ```
 
 Trascrive un file audio esistente, senza registrare e senza conservare audio: in
@@ -183,7 +183,7 @@ Di seguito sono riporati i comandi da poter eseguire per monitorare e gestire la
 ### `status`
 
 ```text
-personal-transcriber status [opzioni]
+scrib status [opzioni]
 ```
 
 Stampa il report JSON della sessione corrente: metadati, stato, durata,
@@ -197,7 +197,7 @@ file.
 ### `pause`
 
 ```text
-personal-transcriber pause [opzioni]
+scrib pause [opzioni]
 ```
 
 Sospende la trascrizione lasciando attiva la registrazione. Chiude il segmento
@@ -210,7 +210,7 @@ aperto e non attraversa l'intervallo sospeso. In questo modo la trascrizione sub
 ### `resume`
 
 ```text
-personal-transcriber resume [opzioni]
+scrib resume [opzioni]
 ```
 
 Riprende la trascrizione dopo una `pause`.
@@ -222,7 +222,7 @@ Riprende la trascrizione dopo una `pause`.
 ### `stop`
 
 ```text
-personal-transcriber stop [opzioni]
+scrib stop [opzioni]
 ```
 
 Finalizza la sessione attiva, questo è il comando che deve essere lanciato per chiudere la registrazione e completare la crezione della cartella di sessione. Attende il completamento. Su una sessione già
@@ -236,7 +236,7 @@ comandi di controllo sono rifiutati.
 ### `export`
 
 ```text
-personal-transcriber export <SESSIONE> [opzioni]
+scrib export <SESSIONE> [opzioni]
 ```
 
 Rilegge il file `transcript.jsonl` di una sessione e restituisce il testo in formato .txt e .md su console, senza
@@ -252,14 +252,14 @@ modificarlo. Rifiuta come destinazione qualsiasi file canonico della sessione.
 ## Esempio di una pipeline di utilizzo
 
 ```sh
-personal-transcriber devices
-personal-transcriber doctor --probe-audio
-personal-transcriber start --language it
-personal-transcriber start --model-preset large-v3-turbo --language it
-personal-transcriber transcribe riunione.mp3 --language @it
-personal-transcriber status
-personal-transcriber pause
-personal-transcriber resume
-personal-transcriber stop
-personal-transcriber export sessions/<sessione> --format srt --output transcript.srt
+scrib devices
+scrib doctor --probe-audio
+scrib start --language it
+scrib start --model-preset large-v3-turbo --language it
+scrib transcribe riunione.mp3 --language @it
+scrib status
+scrib pause
+scrib resume
+scrib stop
+scrib export sessions/<sessione> --format srt --output transcript.srt
 ```

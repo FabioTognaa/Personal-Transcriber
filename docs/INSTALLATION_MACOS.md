@@ -14,8 +14,10 @@ compilare:
 ```sh
 git clone https://github.com/FabioTognaa/personal-transcriber.git
 cd personal-transcriber
-cargo build --release
+cargo install --path . --bin scrib
 ```
+
+Il comando installato si chiama `scrib`.
 
 ## 2. Modelli
 
@@ -54,7 +56,7 @@ Un file GGML qualsiasi siseleziona con `--model <percorso>`, che ha la precedenz
 Esempio di utilizzo:
 
 ```sh
-cargo run --release -- start --model-preset large-v3-turbo --language it
+scrib start --model-preset large-v3-turbo --language it
 ```
 
 | Preset           | File                           | Dimensione | Uso consigliato            |

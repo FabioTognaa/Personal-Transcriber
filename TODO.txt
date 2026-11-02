@@ -6,7 +6,7 @@ In questo momento la CI fallisce su uno dei test per qualche ragione, va risolta
 
 - capire dove sia il problema e provare a risolvere la pipeline 
 - i test falliti devono essere analizzati e sistemati se necessario 
-
+.......................................
 
 FIX E PICCOLI CAMBIAMENTI 
 - attualmente il comando personal-transcriber può essere avviato ovunque, ma la cartella dei modelli non viene individuata: occorrono dei path assoluti per fare in modo che le mat dei pesi vengano individuate

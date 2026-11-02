@@ -3,10 +3,14 @@ name = "personal-transcriber"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
-default-run = "personal-transcriber"
+default-run = "scrib"
 description = "Local-first sCLI for recording and transcribing live meetings"
 license = "MIT"
 repository = "https://github.com/FabioTognaa/personal-transcriber"
+
+[[bin]]
+name = "scrib"
+path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5.48", features = ["derive"] }
