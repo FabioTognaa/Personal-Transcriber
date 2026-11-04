@@ -47,8 +47,8 @@ Non esiste un modello predefinito. Se non si passa né `--model` né
 `--model-preset` e si lancia `start` o `transcribe` da un terminale interattivo,
 compare un menu con i **soli modelli presenti su disco**, ordinati per
 dimensione. Se ce n'è uno solo viene scelto senza domanda. Senza terminale e
-senza modello il comando fallisce con un errore esplicito. Dal menu, `q` annulla
-la scelta e non avvia nulla.
+senza modello il comando fallisce con un errore esplicito. Dal menu, `Esc` o
+`Ctrl-C` annulla la scelta e non avvia nulla.
 
 Preset e artefatti documentati:
 

@@ -403,30 +403,6 @@ struct ModelOption {
     size_bytes: u64,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum MenuChoice {
-    Select(usize),
-    Custom,
-    Cancel,
-    Retry,
-}
-
-/// Parse a menu answer: a valid number selects, `p` asks for a custom path,
-/// `q` cancels. Empty or invalid answers ask again instead of picking a default.
-fn parse_menu_selection(input: &str, option_count: usize) -> MenuChoice {
-    let trimmed = input.trim();
-    if trimmed.eq_ignore_ascii_case("p") {
-        return MenuChoice::Custom;
-    }
-    if trimmed.eq_ignore_ascii_case("q") {
-        return MenuChoice::Cancel;
-    }
-    match trimmed.parse::<usize>() {
-        Ok(number) if (1..=option_count).contains(&number) => MenuChoice::Select(number - 1),
-        _ => MenuChoice::Retry,
-    }
-}
-
 /// Only artifacts present on disk are listed, smallest first. Presets are not
 /// advertised when their file or directory is missing.
 fn model_menu_options(models_dir: &Path) -> Vec<ModelOption> {
@@ -484,21 +460,6 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
-fn print_model_menu(options: &[ModelOption]) {
-    println!("Seleziona il modello per la trascrizione:");
-    for (index, option) in options.iter().enumerate() {
-        println!(
-            "  {}) {:<24} {:>7}  {}",
-            index + 1,
-            option.label,
-            human_size(option.size_bytes),
-            option.path.display()
-        );
-    }
-    print!("numero = scegli, p = percorso personalizzato, q = annulla: ");
-    let _ = std::io::stdout().flush();
-}
-
 /// Interactive model picker. `Ok(None)` means the user cancelled.
 fn select_model_interactively() -> Result<Option<PathBuf>> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
@@ -518,39 +479,46 @@ fn select_model_interactively() -> Result<Option<PathBuf>> {
         );
         return Ok(Some(option.path.clone()));
     }
-    loop {
-        print_model_menu(&options);
-        let mut input = String::new();
-        if std::io::stdin().read_line(&mut input).is_err() {
-            return Err(Error::ModelRequired);
-        }
-        match parse_menu_selection(&input, options.len()) {
-            MenuChoice::Select(index) => return Ok(Some(options[index].path.clone())),
-            MenuChoice::Custom => {
-                print!("Percorso del modello (file .bin o directory ONNX): ");
-                let _ = std::io::stdout().flush();
-                let mut path = String::new();
-                if std::io::stdin().read_line(&mut path).is_err() {
-                    return Err(Error::ModelRequired);
-                }
-                let path = path.trim();
-                if path.is_empty() {
-                    continue;
-                }
-                let path = PathBuf::from(path);
-                match ModelArtifact::detect(&path) {
-                    Ok(_) => return Ok(Some(path)),
-                    Err(error) => println!("{error}"),
-                }
+
+    let custom = options.len();
+    let mut menu = cliclack::select("Seleziona il modello per la trascrizione");
+    for (index, option) in options.iter().enumerate() {
+        menu = menu.item(
+            index,
+            format!("{}  {}", option.label, human_size(option.size_bytes)),
+            option.path.display(),
+        );
+    }
+    let choice = menu
+        .item(
+            custom,
+            "Percorso personalizzato…",
+            "file .bin o directory ONNX",
+        )
+        .interact();
+    let index = match choice {
+        Ok(index) => index,
+        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return Ok(None),
+        Err(error) => return Err(error.into()),
+    };
+    if index != custom {
+        return Ok(Some(options[index].path.clone()));
+    }
+
+    let mut path_input = cliclack::input("Percorso del modello")
+        .placeholder("file .bin o directory ONNX")
+        .validate(|path: &String| {
+            if path.trim().is_empty() {
+                return Err("inserisci un percorso".to_owned());
             }
-            MenuChoice::Cancel => {
-                println!("selezione annullata");
-                return Ok(None);
-            }
-            MenuChoice::Retry => {
-                println!("inserisci un numero tra 1 e {}", options.len());
-            }
-        }
+            ModelArtifact::detect(Path::new(path.trim()))
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        });
+    match path_input.interact::<String>() {
+        Ok(path) => Ok(Some(PathBuf::from(path.trim()))),
+        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => Ok(None),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -590,39 +558,36 @@ enum NamePick {
 
 /// Ask for the recording's repository name, used to build the
 /// `YY-MM-DD_<name>` session directory. Asked only on an interactive terminal so
-/// non-interactive runs keep the date-only name. `q` cancels, like the model menu.
+/// non-interactive runs keep the date-only name. Esc or Ctrl-C cancels, like the
+/// model menu.
 fn select_session_name_interactively(sessions_dir: &Path) -> NamePick {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
         return NamePick::Skipped;
     }
-    loop {
-        print!("Nome della repo per la registrazione (q = annulla): ");
-        let _ = std::io::stdout().flush();
-        let mut input = String::new();
-        if std::io::stdin().read_line(&mut input).is_err() {
-            return NamePick::Skipped;
-        }
-        if input.trim().eq_ignore_ascii_case("q") {
-            println!("selezione annullata");
-            return NamePick::Cancelled;
-        }
-        let name = match clean_session_name(&input) {
-            Ok(name) => name,
-            Err(reason) => {
-                println!("nome non valido: {reason}");
-                continue;
+    let sessions_dir = sessions_dir.to_path_buf();
+    let mut prompt = cliclack::input("Nome della repo per la registrazione")
+        .placeholder("es. meeting_notes")
+        .validate(move |input: &String| {
+            let name = clean_session_name(input).map_err(str::to_owned)?;
+            if let Some(directory) = candidate_session_directory(&sessions_dir, &name)
+                && directory.exists()
+            {
+                return Err(format!(
+                    "esiste già una sessione \"{}\": scegli un altro nome",
+                    directory.file_name().unwrap_or_default().to_string_lossy()
+                ));
             }
-        };
-        if let Some(directory) = candidate_session_directory(sessions_dir, &name)
-            && directory.exists()
-        {
-            println!(
-                "esiste già una sessione \"{}\": scegli un altro nome",
-                directory.file_name().unwrap_or_default().to_string_lossy()
-            );
-            continue;
-        }
-        return NamePick::Use(name);
+            Ok(())
+        });
+    match prompt.interact::<String>() {
+        // The validator has already accepted the name; clean it once more to
+        // return the normalized form.
+        Ok(name) => match clean_session_name(&name) {
+            Ok(name) => NamePick::Use(name),
+            Err(_) => NamePick::Skipped,
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => NamePick::Cancelled,
+        Err(_) => NamePick::Skipped,
     }
 }
 
@@ -760,18 +725,6 @@ mod tests {
             resolve_model(args.model.model, args.model.model_preset).expect("explicit path"),
             Some(PathBuf::from("models/custom.bin"))
         );
-    }
-
-    #[test]
-    fn menu_selection_parsing_never_falls_back_to_a_default() {
-        assert_eq!(parse_menu_selection("", 4), MenuChoice::Retry);
-        assert_eq!(parse_menu_selection("  2 ", 4), MenuChoice::Select(1));
-        assert_eq!(parse_menu_selection("5", 4), MenuChoice::Retry);
-        assert_eq!(parse_menu_selection("0", 4), MenuChoice::Retry);
-        assert_eq!(parse_menu_selection("p", 4), MenuChoice::Custom);
-        assert_eq!(parse_menu_selection("abc", 4), MenuChoice::Retry);
-        assert_eq!(parse_menu_selection("q", 4), MenuChoice::Cancel);
-        assert_eq!(parse_menu_selection(" Q ", 4), MenuChoice::Cancel);
     }
 
     #[test]

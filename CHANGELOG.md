@@ -29,6 +29,8 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
 ### Changed
 
+- I menu interattivi per nome della sessione e scelta del modello usano ora
+  prompt a frecce con validazione in linea; `Esc`/`Ctrl-C` annulla.
 - Non esiste più un modello predefinito: `start`, `transcribe` e `doctor`
   richiedono `--model`/`--model-preset` oppure mostrano un menu con i soli
   modelli già scaricati, ordinati per dimensione. Senza terminale e senza modello

@@ -71,7 +71,8 @@ done
 
 Se avvii `start` o `transcribe` da un terminale, compare un menu con i **soli
 modelli presenti**, ordinati per dimensione. Se ce n'è uno solo viene scelto senza
-domanda; se non ce n'è nessuno il comando spiega come scaricarli. `q` annulla.
+domanda; se non ce n'è nessuno il comando spiega come scaricarli. `Esc` o
+`Ctrl-C` annulla.
 Senza terminale e senza `--model`/`--model-preset` il comando fallisce con un
 errore esplicito.
 
