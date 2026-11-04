@@ -18,14 +18,24 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 - Benchmark consapevole del motore, con fixture di 60 s di silenzio per misurare
   le allucinazioni.
 - Comando `transcribe <file>` per trascrivere un file esistente senza creare una
-  sessione: produce solo `<nome>.txt`, in una cartella nuova sotto `--sessions-dir`
-  (stesso nome `YY-MM-DD` di `start`), e non conserva audio né eventi.
+  sessione live: produce `session.json`, `transcript.jsonl` e `<nome>.txt` con i
+  timestamp in una cartella nuova sotto `--sessions-dir` (stesso nome `YY-MM-DD`
+  di `start`), senza conservare audio né eventi.
+- Percorso batch di `transcribe`: una sola inferenza sull'intero file, con i
+  segmenti nativi di Whisper e i loro timestamp. Non usa più il VAD del live,
+  quindi non ci sono più trascrizioni vuote dovute alla soglia RMS.
+- Il `.txt` di `transcribe` contiene i timestamp; `export --format text` produce
+  dallo stesso JSONL la versione senza timestamp. Il `.txt` raggruppa i
+  micro-segmenti nativi in righe leggibili (punteggiatura, pausa ≥ 0,5 s o max
+  20 s).
 - Barra di avanzamento per `transcribe` su terminale: una riga sola ridisegnata in
   place, con la percentuale già trascritta sul totale (mai il tempo rimanente).
   Niente output quando standard output non è un terminale.
-- Decodifica in streaming di MP3, M4A/MP4 (AAC) e AAC tramite `symphonia` (puro
-  Rust, nessun ffmpeg richiesto), normalizzata a mono 16 kHz con memoria costante.
-  La trascrizione di un file procede più velocemente del tempo reale.
+- Decodifica in streaming di WAV, MP3, M4A/MP4 (AAC) e AAC tramite `symphonia`
+  (puro Rust, nessun ffmpeg richiesto), normalizzata a mono 16 kHz con memoria
+  costante. Il vecchio limite di 64 MiB / 30 minuti per i WAV non esiste più.
+- `transcribe` registra `temperature_inc = 0` nel batch per disattivare i retry
+  del fallback di temperatura; il live resta a `0,2`.
 
 ### Changed
 
@@ -44,11 +54,12 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 - `doctor` verifica i bundle con una sola lettura dei file.
 - Le cartelle di sessione sono nominate con il giorno di avvio (`YY-MM-DD`) e non
   più con data e ora; più sessioni nello stesso giorno usano i suffissi `_2`, `_3`….
-- Ridotte le opzioni di tuning: `start` e `transcribe` espongono solo soglia,
-  innesco e fine del VAD (`--vad-threshold`, `--vad-start-ms`, `--vad-end-ms`) e
-  `--asr-flash-attention`; thread, strategia, beam, temperatura e Core ML usano i
-  default. Rimossi i flag mai usati `--asr-threads`, `--asr-strategy`,
-  `--asr-best-of`, `--asr-beam-size`, `--asr-temperature`, `--asr-coreml`,
+- Ridotte le opzioni di tuning: `start` espone soglia, innesco e fine del VAD
+  (`--vad-threshold`, `--vad-start-ms`, `--vad-end-ms`) e
+  `--asr-flash-attention`; `transcribe` espone solo `--asr-flash-attention`.
+  Thread, strategia, beam, temperatura e Core ML usano i default. Rimossi i flag
+  mai usati `--asr-threads`, `--asr-strategy`, `--asr-best-of`,
+  `--asr-beam-size`, `--asr-temperature`, `--asr-coreml`,
   `--vad-pre-roll-ms`, `--vad-post-roll-ms`, `--vad-min-speech-ms`,
   `--vad-max-segment-ms` e `--probe-seconds`; i valori restano registrati in
   `session.json`.
@@ -57,6 +68,13 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 - I log di whisper.cpp/ggml non finiscono più su standard error a prescindere: passano
   per il logging del transcriber, quindi restano nascosti finché non si alza la
   verbosità con `-v`. Vale per `start` e per `transcribe`.
+
+### Removed
+
+- I flag `--vad-threshold`, `--vad-start-ms` e `--vad-end-ms` non sono più
+  accettati da `transcribe`: il percorso batch non usa il VAD. Restano su `start`.
+- Rimosso il preset `small` e il modello `ggml-small-q5_1.bin`: restano
+  `medium`, `large-v3-turbo`, `large-v3` e `parakeet-v3`.
 
 ## [0.2.0]
 

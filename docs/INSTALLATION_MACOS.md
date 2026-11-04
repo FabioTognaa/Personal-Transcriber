@@ -44,7 +44,6 @@ Gli altri preset documentati:
 
 | Preset           | File                           | Dimensione | Uso consigliato            |
 | ---------------- | ------------------------------ | ---------: | -------------------------- |
-| `small`          | `ggml-small-q5_1.bin`          |    ~190 MB | molto veloce, meno preciso |
 | `medium`         | `ggml-medium-q5_0.bin`         |    ~540 MB | via di mezzo               |
 | `large-v3-turbo` | `ggml-large-v3-turbo-q8_0.bin` |    ~874 MB | migliore qualità/velocità  |
 | `large-v3`       | `ggml-large-v3-q5_0.bin`       |    ~1,1 GB | qualità massima, più lento |

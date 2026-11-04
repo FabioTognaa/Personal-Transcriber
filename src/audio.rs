@@ -103,29 +103,6 @@ impl FileAudioSource {
     pub fn sample_count(&self) -> usize {
         self.samples.len()
     }
-
-    /// One chunk by index, used by the one-shot `transcribe` path which pulls
-    /// chunks instead of iterating. [`FileAudioSource::chunks`] is left untouched
-    /// for the live-simulator callers.
-    pub(crate) fn chunk_at(&self, index: usize) -> Option<PcmChunk> {
-        let start = index.checked_mul(self.chunk_frames)?;
-        let end = start
-            .saturating_add(self.chunk_frames)
-            .min(self.samples.len());
-        let samples = self.samples.get(start..end)?;
-        if samples.is_empty() {
-            return None;
-        }
-        Some(PcmChunk {
-            source: AudioSourceKind::File,
-            start: TimestampUs(
-                (start as u64).saturating_mul(1_000_000) / u64::from(TARGET_SAMPLE_RATE_HZ),
-            ),
-            sample_rate_hz: TARGET_SAMPLE_RATE_HZ,
-            channels: TARGET_CHANNELS,
-            samples: samples.to_vec(),
-        })
-    }
 }
 
 /// Streams a canonical 16-bit mono 16 kHz WAV as 20 ms chunks without loading
@@ -181,10 +158,10 @@ impl StreamingAudioSource {
     }
 }
 
-/// Decodes a compressed audio file (MP3, M4A/MP4-AAC, AAC) packet by packet and
+/// Decodes an audio file (WAV, MP3, M4A/MP4-AAC, AAC) packet by packet and
 /// emits canonical 16 kHz mono chunks. Memory stays bounded regardless of file
 /// duration because nothing but the current packet and a partial chunk is held.
-pub struct CompressedAudioSource {
+pub struct DecodedAudioSource {
     reader: Box<dyn FormatReader>,
     decoder: Box<dyn Decoder>,
     track_id: u32,
@@ -198,7 +175,7 @@ pub struct CompressedAudioSource {
     total_us: Option<u64>,
 }
 
-impl CompressedAudioSource {
+impl DecodedAudioSource {
     pub fn open(path: &Path) -> Result<Self> {
         let file = std::fs::File::open(path)?;
         let stream = MediaSourceStream::new(Box::new(file), Default::default());
@@ -507,7 +484,7 @@ mod tests {
             let path = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures")
                 .join(name);
-            let mut source = CompressedAudioSource::open(&path).expect("source should open");
+            let mut source = DecodedAudioSource::open(&path).expect("source should open");
             let mut total = 0_usize;
             while let Some(chunk) = source.next_chunk().expect("chunk should decode") {
                 assert_eq!(chunk.channels, TARGET_CHANNELS);
@@ -542,6 +519,24 @@ mod tests {
         assert!(FileAudioSource::open(&path).is_err());
 
         let mut source = StreamingAudioSource::open(&path).expect("streaming should open");
+        for _ in 0..5 {
+            let chunk = source
+                .next_chunk()
+                .expect("chunk should read")
+                .expect("chunk should exist");
+            assert_eq!(chunk.samples.len(), 320);
+        }
+    }
+
+    #[test]
+    fn decoded_source_reads_long_wavs_the_simulator_rejects() {
+        let temporary = tempfile::tempdir().expect("temporary directory should be created");
+        let path = temporary.path().join("long.wav");
+        write_sparse_wav(&path, MAX_FILE_SOURCE_BYTES / 2 + 1);
+
+        assert!(FileAudioSource::open(&path).is_err());
+
+        let mut source = DecodedAudioSource::open(&path).expect("streaming WAV should open");
         for _ in 0..5 {
             let chunk = source
                 .next_chunk()

@@ -77,9 +77,31 @@ Il motore viene dato ad un thread worker, che a seconda del compito lo usa liber
 
 ## Transcrizione di file
 
-Possono essere trascritti anche file audio-video già esistenti nella propria macchina; in questo caso la trascrizione non avviene in streaming ed è quindi più veloce e meno esosa di risorse.
-I formati di file supportati sono: mp3, m4a, mp4, aac.
-Per quanto riguarda i formati wav, ad oggi non c'è ancora una funzione nativa che consenta una trascrizione che non simuli quella in velocità di streaming (verrà corretta con le successive implementazioni)
+Possono essere trascritti anche file audio già esistenti nella propria macchina:
+in questo caso la trascrizione non simula lo streaming del live e usa un percorso
+batch dedicato. I formati supportati sono `wav`, `mp3`, `m4a`, `mp4` e `aac`;
+tutti vengono decodificati in streaming, quindi non esiste più il vecchio limite
+di 64 MiB / 30 minuti per i WAV.
+
+Il batch decodifica il file e fa **una sola** inferenza sull'intero audio,
+lasciando a Whisper la segmentazione nativa. Il tempo dipende quindi dalla durata
+dell'audio, non dal numero di frasi. L'audio decodificato resta in memoria: il
+limite è fissato a 4 ore, oltre le quali il comando si ferma con un errore chiaro.
+
+Ogni esecuzione crea una cartella nuova sotto `sessions/` con:
+
+- `session.json`: lingua, modello, SHA-256, parametri e file di origine;
+- `transcript.jsonl`: la fonte canonica, un segmento per riga;
+- `<nome>.txt`: una riga per gruppo di segmenti (max 20 s), con i timestamp.
+
+Per ottenere lo stesso testo senza timestamp:
+
+```sh
+scrib export sessions/<cartella> --format text
+```
+
+Con Parakeet i segmenti sono i chunk interni da 15 secondi: i timestamp sono
+reali ma possono spezzare una frase.
 
 ## Limiti noti
 
@@ -92,8 +114,9 @@ Per quanto riguarda i formati wav, ad oggi non c'è ancora una funzione nativa c
 - I file delle sessioni non sono cifrati a riposo.
 - Il rilevamento del parlato usa una soglia energetica RMS, non un modello VAD.
 - La cattura live non è ancora stata validata end-to-end su una call reale.
-- `transcribe` elabora un file alla volta e in un solo thread: nel formato
-  leggero non esistono pause, ripresa o stato di avanzamento.
+- `transcribe` elabora un file alla volta e in un solo thread: non esistono
+  pause o ripresa. Su un terminale mostra una barra di avanzamento; con l'output
+  rediretto non stampa nulla finché non ha finito.
 
 ## Documentazione nel dettaglio
 
@@ -120,7 +143,7 @@ Il test con un modello Whisper reale è ignorato per impostazione predefinita e
 richiede `PERSONAL_TRANSCRIBER_MODEL`:
 
 ```sh
-PERSONAL_TRANSCRIBER_MODEL=models/ggml-small-q5_1.bin \
+PERSONAL_TRANSCRIBER_MODEL=models/ggml-large-v3-turbo-q8_0.bin \
   cargo test real_whisper_model_processes_local_audio -- --ignored
 ```
 

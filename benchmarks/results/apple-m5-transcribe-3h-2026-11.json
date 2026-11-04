@@ -1,0 +1,128 @@
+{
+  "generated_at_unix_ms": 1793805768269,
+  "kind": "transcribe_long_validation",
+  "hardware": {
+    "os_version": "27.0.1",
+    "chip": "Apple M5",
+    "memory_bytes": "34359738368"
+  },
+  "input": {
+    "name": "Resistori： Jaki contro tutti [Mf63wiVnZo0].webm",
+    "sha256": "7bc84d4e4fce7d6bf7ef4f0bdacf2ba5aaf187c31bf7e7ad5b8ed93a4ff24d37",
+    "duration_us": 10652361000,
+    "format": "webm (AV1 video + Opus audio, 48 kHz stereo)",
+    "converted": {
+      "name": "resistori.m4a",
+      "sha256": "dc25bd33858e1a619ae75b9864c124cf81efdff49af5fc1e6fcdf7bc189d31e6",
+      "duration_us": 10652339958,
+      "size_bytes": 173545735,
+      "codec": "aac 128k"
+    }
+  },
+  "model": {
+    "path": "models/ggml-large-v3-turbo-q8_0.bin",
+    "sha256": "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+    "size_bytes": 874188075
+  },
+  "prefix_20_min": {
+    "old_runs_seconds": [
+      174.06,
+      170.13
+    ],
+    "new_runs_seconds": [
+      157.38,
+      153.31
+    ],
+    "old_median_seconds": 172.095,
+    "new_median_seconds": 155.345,
+    "speedup": 1.1078,
+    "old_max_rss_bytes": [
+      1244446720,
+      1245462528
+    ],
+    "new_max_rss_bytes": [
+      1372618752,
+      1374633984
+    ],
+    "text": {
+      "old_chars": 14055,
+      "new_chars": 14109,
+      "old_words": 2415,
+      "new_words": 2434,
+      "old_lines": 52,
+      "new_lines": 187,
+      "word_overlap": 0.9027
+    }
+  },
+  "full_file": {
+    "old_transcribe": {
+      "executed": false,
+      "note": "full old run skipped; prefix A/B used"
+    },
+    "new_transcribe": {
+      "wall_seconds": 1214.85,
+      "rtf": 0.114,
+      "max_rss_bytes": 3129032704,
+      "txt_lines": 721,
+      "chars": 145992,
+      "words": 25975,
+      "asr_calls": 1,
+      "round_trip": "exact"
+    }
+  },
+  "temperature_inc_experiment": {
+    "input": "20-min prefix",
+    "inc_0_0": {
+      "rtf": 0.1263,
+      "max_rss_bytes": 1373831168,
+      "words": 2434,
+      "max_repeated_3gram": 7,
+      "top": "in diretta con i resistori"
+    },
+    "inc_0_2": {
+      "rtf": 0.1284,
+      "max_rss_bytes": 1373290496,
+      "words": 2558,
+      "max_repeated_3gram": 9,
+      "top": "grazie a tutti"
+    },
+    "decision": "keep 0.0: 0.2 does not remove the loops and costs ~1.7% RTF"
+  },
+  "no_context_experiment": {
+    "input": "20-min prefix",
+    "rtf": 0.1222,
+    "words": 2434,
+    "max_repeated_3gram": 7,
+    "decision": "text identical to no_context=false; not adopted"
+  },
+  "loop_finding": "Full file has one 30 s line at 2:56:44 with 'oh oh oh' 217 times (outro/context). On the isolated last 2 minutes both old and new produce 'ohm', not 'oh': the loop depends on long-range context.",
+  "verdict": "Whisper turbo: 1215 s, 2.91 GiB, loop 'oh oh oh' all'outro. Parakeet: 441 s (2.76x faster), 1.75 GiB (1.66x less), 92.2% word overlap, no outro loop, language auto-detection. Parakeet is the speed/memory option; keep it explicit because it has no prompt/glossary and coarse 15 s timestamps.",
+  "parakeet_full": {
+    "wall_seconds": 440.6,
+    "rtf": 0.0414,
+    "max_rss_bytes": 1876410368,
+    "chars": 144739,
+    "words": 25757,
+    "lines": 701,
+    "max_repeated_3gram": 24,
+    "top_3gram": "nel senso che (frase normale, non loop)",
+    "word_overlap_vs_whisper": 0.9224,
+    "word_ratio_vs_whisper": 0.971,
+    "outro_loop": "assente (Whisper: 'oh oh oh' x217)"
+  },
+  "start_excerpt": {
+    "input": "primi 180 s del file, WAV 16 kHz mono",
+    "wall_seconds": 181.77,
+    "state": "completed",
+    "engine": "parakeet",
+    "segments": 4,
+    "words": 40,
+    "chars": 241,
+    "note": "start non ha un flag file: il replay WAV e' in tempo reale e limitato a 30 min; il file intero da 3 h richiederebbe 3 h di wall clock"
+  },
+  "language_detection": {
+    "test": "stesso estratto con --language it e --language en",
+    "result": "testo identico (53 parole entrambi)",
+    "note": "Parakeet ignora --language e rileva la lingua da solo"
+  }
+}

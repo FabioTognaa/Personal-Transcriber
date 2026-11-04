@@ -14,8 +14,8 @@ use ort::session::Session;
 use ort::session::builder::AutoDevicePolicy;
 use ort::value::Tensor;
 
-use crate::asr::{AsrEngine, AsrOutput};
-use crate::domain::{InferenceConfig, SpeechSegment};
+use crate::asr::{AsrEngine, AsrOutput, Progress};
+use crate::domain::{InferenceConfig, SpeechSegment, TimedText, TimestampUs, samples_to_us};
 use crate::model::ModelArtifact;
 use crate::{Error, Result};
 
@@ -222,6 +222,38 @@ impl AsrEngine for ParakeetEngine {
             inference_duration_us: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
         })
     }
+
+    fn transcribe_batch(
+        &mut self,
+        samples: &[f32],
+        _language: &str,
+        _config: &InferenceConfig,
+        progress: &Progress,
+    ) -> Result<Vec<TimedText>> {
+        let chunk_samples = MAX_CHUNK_SECONDS * SAMPLE_RATE;
+        let total_us = samples_to_us(samples.len());
+        let mut segments = Vec::new();
+        for (index, chunk) in samples.chunks(chunk_samples).enumerate() {
+            let (start, end) = chunk_time_range(index, chunk.len(), chunk_samples, total_us);
+            let text = self.transcribe_chunk(chunk)?.trim().to_owned();
+            if !text.is_empty() {
+                segments.push(TimedText { start, end, text });
+            }
+            progress.report(end.0);
+        }
+        Ok(segments)
+    }
+}
+
+fn chunk_time_range(
+    index: usize,
+    chunk_len: usize,
+    chunk_samples: usize,
+    total_us: u64,
+) -> (TimestampUs, TimestampUs) {
+    let start = samples_to_us(index.saturating_mul(chunk_samples)).min(total_us);
+    let end = start.saturating_add(samples_to_us(chunk_len)).min(total_us);
+    (TimestampUs(start), TimestampUs(end))
 }
 
 fn open_session(path: &Path, threads: i32) -> Result<Session> {
@@ -299,6 +331,29 @@ mod tests {
     fn argmax_returns_the_highest_index() {
         assert_eq!(argmax(&[0.1, 0.9, 0.3]), 1);
         assert_eq!(argmax(&[]), 0);
+    }
+
+    #[test]
+    fn chunk_timestamps_are_contiguous_and_clamped_to_the_end() {
+        let chunk_samples = MAX_CHUNK_SECONDS * SAMPLE_RATE;
+        let total_samples = chunk_samples * 2 + 100;
+        let total_us = samples_to_us(total_samples);
+
+        assert_eq!(
+            chunk_time_range(0, chunk_samples, chunk_samples, total_us),
+            (TimestampUs(0), TimestampUs(15_000_000))
+        );
+        assert_eq!(
+            chunk_time_range(1, chunk_samples, chunk_samples, total_us),
+            (TimestampUs(15_000_000), TimestampUs(30_000_000))
+        );
+        assert_eq!(
+            chunk_time_range(2, 100, chunk_samples, total_us),
+            (
+                TimestampUs(30_000_000),
+                TimestampUs(samples_to_us(total_samples))
+            )
+        );
     }
 
     /// Release output matches the human reference; debug builds can differ by a

@@ -30,6 +30,10 @@ pub struct InferenceConfig {
     pub best_of: i32,
     pub beam_size: i32,
     pub temperature: f32,
+    /// Increment used by whisper.cpp's temperature fallback. `0.0` disables
+    /// the retries; the live path keeps whisper's default of `0.2`.
+    #[serde(default = "default_temperature_inc")]
+    pub temperature_inc: f32,
     pub flash_attention: bool,
     pub coreml: bool,
     /// Initial prompt passed to Whisper before decoding.
@@ -48,6 +52,21 @@ pub fn default_threads() -> i32 {
     std::thread::available_parallelism().map_or(4, |parallelism| parallelism.get().min(8) as i32)
 }
 
+/// whisper.cpp's default temperature increment. Old transcripts without the
+/// field keep the live behaviour.
+#[must_use]
+pub fn default_temperature_inc() -> f32 {
+    0.2
+}
+
+/// Duration of `samples` canonical 16 kHz frames, in microseconds.
+#[must_use]
+pub fn samples_to_us(samples: usize) -> u64 {
+    (samples as u64)
+        .saturating_mul(1_000_000)
+        .saturating_div(u64::from(TARGET_SAMPLE_RATE_HZ))
+}
+
 impl Default for InferenceConfig {
     fn default() -> Self {
         Self {
@@ -56,6 +75,7 @@ impl Default for InferenceConfig {
             best_of: 5,
             beam_size: 5,
             temperature: 0.0,
+            temperature_inc: default_temperature_inc(),
             flash_attention: true,
             coreml: false,
             prompt: None,
@@ -128,6 +148,14 @@ pub struct SpeechSegment {
     pub start: TimestampUs,
     pub end: TimestampUs,
     pub samples: Vec<f32>,
+}
+
+/// One transcribed piece with its absolute position in the source audio.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimedText {
+    pub start: TimestampUs,
+    pub end: TimestampUs,
+    pub text: String,
 }
 
 impl SpeechSegment {
@@ -401,6 +429,21 @@ mod tests {
 
         assert_eq!(decoded, segment);
         assert_eq!(decoded.text, "Testo ASR  non corretto.");
+    }
+
+    #[test]
+    fn old_inference_config_without_temperature_inc_keeps_the_live_default() {
+        let mut value = serde_json::to_value(InferenceConfig::default())
+            .expect("inference config should serialize");
+        value
+            .as_object_mut()
+            .expect("inference config is an object")
+            .remove("temperature_inc");
+
+        let decoded: InferenceConfig =
+            serde_json::from_value(value).expect("old inference config should deserialize");
+
+        assert_eq!(decoded.temperature_inc, default_temperature_inc());
     }
 
     #[test]

@@ -160,6 +160,33 @@ pub fn render_text(lines: &[SegmentLine]) -> String {
     output
 }
 
+/// Default `transcribe` output: one timestamped line per native segment.
+pub fn render_text_with_timestamps(lines: &[SegmentLine]) -> String {
+    let mut output = String::new();
+    for line in lines {
+        output.push('[');
+        output.push_str(&format_timestamp_short(line.start.0));
+        output.push_str(" → ");
+        output.push_str(&format_timestamp_short(line.end.0));
+        output.push_str("] ");
+        output.push_str(&line.text);
+        output.push('\n');
+    }
+    output
+}
+
+/// Short timestamp for the transcript header and the progress bar: seconds, with
+/// hours only when needed (`05:03`, `1:00:04`).
+pub(crate) fn format_timestamp_short(microseconds: u64) -> String {
+    let seconds = microseconds / 1_000_000;
+    let (hours, minutes, seconds) = (seconds / 3_600, (seconds % 3_600) / 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes:02}:{seconds:02}")
+    }
+}
+
 pub fn render_markdown(lines: &[SegmentLine], title: &str) -> String {
     let mut output = format!("# {title}\n");
     for line in lines {
@@ -336,6 +363,35 @@ mod tests {
         .expect("text should render");
 
         assert_eq!(rendered, " Testo  non corretto.\nSeconda riga\n");
+    }
+
+    #[test]
+    fn timestamped_text_uses_short_timestamps_and_preserves_text() {
+        let lines = [
+            SegmentLine {
+                start: TimestampUs(0),
+                end: TimestampUs(7_000_000),
+                text: "Ciao".to_owned(),
+            },
+            SegmentLine {
+                start: TimestampUs(3_600_000_000),
+                end: TimestampUs(3_604_000_000),
+                text: "Dopo un'ora".to_owned(),
+            },
+        ];
+
+        assert_eq!(
+            render_text_with_timestamps(&lines),
+            "[00:00 → 00:07] Ciao\n[1:00:00 → 1:00:04] Dopo un'ora\n"
+        );
+    }
+
+    #[test]
+    fn short_timestamps_widen_past_one_hour() {
+        assert_eq!(format_timestamp_short(0), "00:00");
+        assert_eq!(format_timestamp_short(59_000_000), "00:59");
+        assert_eq!(format_timestamp_short(3_600_000_000), "1:00:00");
+        assert_eq!(format_timestamp_short(5_425_000_000), "1:30:25");
     }
 
     #[test]

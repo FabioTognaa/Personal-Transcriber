@@ -12,7 +12,8 @@ use uuid::Uuid;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 use crate::domain::{
-    InferenceConfig, InferenceStrategy, ModelIdentity, SpeechSegment, TranscriptSegment,
+    InferenceConfig, InferenceStrategy, ModelIdentity, SpeechSegment, TimedText, TimestampUs,
+    TranscriptSegment, samples_to_us,
 };
 use crate::model::{ArtifactKind, ModelArtifact};
 use crate::schema::SCHEMA_VERSION;
@@ -26,6 +27,70 @@ pub struct AsrOutput {
     pub inference_duration_us: u64,
 }
 
+/// Progress reporter shared with the engines. It is `Clone + 'static` so it can
+/// be captured by whisper.cpp's safe progress callback.
+type ProgressCallback = Box<dyn FnMut(u64) + Send>;
+
+#[derive(Clone)]
+pub struct Progress(Arc<Mutex<ProgressCallback>>);
+
+impl Progress {
+    pub fn new<F>(callback: F) -> Self
+    where
+        F: FnMut(u64) + Send + 'static,
+    {
+        Self(Arc::new(Mutex::new(Box::new(callback))))
+    }
+
+    pub fn report(&self, transcribed_us: u64) {
+        let mut callback = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        callback(transcribed_us);
+    }
+}
+
+/// Maximum duration of one `.txt` line after merging whisper's micro-segments.
+pub const MERGE_MAX_LINE_DURATION_US: u64 = 20_000_000;
+/// A silence at least this long closes the current line.
+const MERGE_GAP_US: u64 = 500_000;
+
+/// Whisper returns micro-segments of about one second. The live path used the VAD
+/// to group them; the batch path groups them here, so the `.txt` stays readable
+/// without losing the native timestamps. The canonical JSONL stores the merged
+/// pieces too, which keeps `export --format text` byte-identical to the `.txt`
+/// without its prefixes.
+pub fn merge_timed_text(pieces: Vec<TimedText>) -> Vec<TimedText> {
+    let mut merged: Vec<TimedText> = Vec::new();
+    for piece in pieces {
+        let Some(current) = merged.last_mut() else {
+            merged.push(piece);
+            continue;
+        };
+        let gap_us = piece.start.0.saturating_sub(current.end.0);
+        let would_end_us = piece.end.0.saturating_sub(current.start.0);
+        if ends_sentence(&current.text)
+            || gap_us >= MERGE_GAP_US
+            || would_end_us > MERGE_MAX_LINE_DURATION_US
+        {
+            merged.push(piece);
+        } else {
+            current.end = piece.end;
+            if !current.text.is_empty() && !piece.text.is_empty() {
+                current.text.push(' ');
+            }
+            current.text.push_str(&piece.text);
+        }
+    }
+    merged
+}
+
+fn ends_sentence(text: &str) -> bool {
+    let trimmed = text.trim_end().trim_end_matches(['"', '”', '’', '\'']);
+    matches!(trimmed.chars().last(), Some('.' | '!' | '?' | '…'))
+}
+
 pub trait AsrEngine: Send + 'static {
     fn transcribe(
         &mut self,
@@ -33,6 +98,39 @@ pub trait AsrEngine: Send + 'static {
         language: &str,
         config: &InferenceConfig,
     ) -> Result<AsrOutput>;
+
+    /// Transcribes the whole file in one batch call and returns timed pieces.
+    ///
+    /// The default implementation wraps the live path and is meant for mocks;
+    /// real engines override it so they can preserve their native segmentation.
+    fn transcribe_batch(
+        &mut self,
+        samples: &[f32],
+        language: &str,
+        config: &InferenceConfig,
+        _progress: &Progress,
+    ) -> Result<Vec<TimedText>> {
+        let end = TimestampUs(samples_to_us(samples.len()));
+        let output = self.transcribe(
+            &SpeechSegment {
+                start: TimestampUs(0),
+                end,
+                samples: samples.to_vec(),
+            },
+            language,
+            config,
+        )?;
+        let text = output.text.trim().to_owned();
+        Ok(if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![TimedText {
+                start: TimestampUs(0),
+                end,
+                text,
+            }]
+        })
+    }
 }
 
 impl AsrEngine for Box<dyn AsrEngine> {
@@ -43,6 +141,16 @@ impl AsrEngine for Box<dyn AsrEngine> {
         config: &InferenceConfig,
     ) -> Result<AsrOutput> {
         (**self).transcribe(segment, language, config)
+    }
+
+    fn transcribe_batch(
+        &mut self,
+        samples: &[f32],
+        language: &str,
+        config: &InferenceConfig,
+        progress: &Progress,
+    ) -> Result<Vec<TimedText>> {
+        (**self).transcribe_batch(samples, language, config, progress)
     }
 }
 
@@ -291,27 +399,7 @@ impl AsrEngine for WhisperEngine {
         config: &InferenceConfig,
     ) -> Result<AsrOutput> {
         validate_inference_config(config)?;
-        let strategy = match config.strategy {
-            InferenceStrategy::Greedy => SamplingStrategy::Greedy {
-                best_of: config.best_of,
-            },
-            InferenceStrategy::BeamSearch => SamplingStrategy::BeamSearch {
-                beam_size: config.beam_size,
-                patience: -1.0,
-            },
-        };
-        let mut parameters = FullParams::new(strategy);
-        parameters.set_n_threads(config.threads);
-        parameters.set_translate(false);
-        parameters.set_language(Some(language));
-        if let Some(prompt) = config.prompt.as_deref().filter(|prompt| !prompt.is_empty()) {
-            parameters.set_initial_prompt(prompt);
-        }
-        parameters.set_temperature(config.temperature);
-        parameters.set_print_special(false);
-        parameters.set_print_progress(false);
-        parameters.set_print_realtime(false);
-        parameters.set_print_timestamps(false);
+        let parameters = whisper_parameters(language, config.prompt.as_deref(), config);
 
         let started = Instant::now();
         let mut state = self
@@ -339,6 +427,85 @@ impl AsrEngine for WhisperEngine {
             inference_duration_us: u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
         })
     }
+
+    fn transcribe_batch(
+        &mut self,
+        samples: &[f32],
+        language: &str,
+        config: &InferenceConfig,
+        progress: &Progress,
+    ) -> Result<Vec<TimedText>> {
+        validate_inference_config(config)?;
+        let total_us = samples_to_us(samples.len());
+        let mut parameters = whisper_parameters(language, config.prompt.as_deref(), config);
+        let callback_progress = progress.clone();
+        parameters.set_progress_callback_safe(move |percent: i32| {
+            let percent = u64::try_from(percent).unwrap_or(0).min(100);
+            callback_progress.report(total_us.saturating_mul(percent) / 100);
+        });
+
+        let mut state = self
+            .context
+            .create_state()
+            .map_err(|error| Error::Asr(error.to_string()))?;
+        state
+            .full(parameters, samples)
+            .map_err(|error| Error::Asr(error.to_string()))?;
+
+        let mut segments = Vec::new();
+        for index in 0..state.full_n_segments() {
+            let whisper_segment = state.get_segment(index).ok_or_else(|| {
+                Error::Asr("whisper returned an invalid segment index".to_owned())
+            })?;
+            let start = TimestampUs(centiseconds_to_us(whisper_segment.start_timestamp()));
+            let end = TimestampUs(centiseconds_to_us(whisper_segment.end_timestamp()));
+            let text = whisper_segment
+                .to_str()
+                .map_err(|error| Error::Asr(error.to_string()))?
+                .trim()
+                .to_owned();
+            if !text.is_empty() {
+                segments.push(TimedText { start, end, text });
+            }
+        }
+        progress.report(total_us);
+        Ok(segments)
+    }
+}
+
+/// Timestamps returned by whisper.cpp are in centiseconds (10 ms units).
+fn centiseconds_to_us(value: i64) -> u64 {
+    u64::try_from(value).unwrap_or(0).saturating_mul(10_000)
+}
+
+fn whisper_parameters<'a, 'b>(
+    language: &'a str,
+    prompt: Option<&'b str>,
+    config: &InferenceConfig,
+) -> FullParams<'a, 'b> {
+    let strategy = match config.strategy {
+        InferenceStrategy::Greedy => SamplingStrategy::Greedy {
+            best_of: config.best_of,
+        },
+        InferenceStrategy::BeamSearch => SamplingStrategy::BeamSearch {
+            beam_size: config.beam_size,
+            patience: -1.0,
+        },
+    };
+    let mut parameters = FullParams::new(strategy);
+    parameters.set_n_threads(config.threads);
+    parameters.set_translate(false);
+    parameters.set_language(Some(language));
+    if let Some(prompt) = prompt.filter(|prompt| !prompt.is_empty()) {
+        parameters.set_initial_prompt(prompt);
+    }
+    parameters.set_temperature(config.temperature);
+    parameters.set_temperature_inc(config.temperature_inc);
+    parameters.set_print_special(false);
+    parameters.set_print_progress(false);
+    parameters.set_print_realtime(false);
+    parameters.set_print_timestamps(false);
+    parameters
 }
 
 /// SHA-256 of a file, read in bounded chunks so large files are never loaded
@@ -536,6 +703,11 @@ pub fn validate_inference_config(config: &InferenceConfig) -> Result<()> {
             "temperature must be finite and non-negative".to_owned(),
         ));
     }
+    if !config.temperature_inc.is_finite() || config.temperature_inc < 0.0 {
+        return Err(Error::InvalidInferenceConfig(
+            "temperature increment must be finite and non-negative".to_owned(),
+        ));
+    }
     if let Some(prompt) = config.prompt.as_deref()
         && prompt.contains('\0')
     {
@@ -634,6 +806,79 @@ mod tests {
         }
 
         assert_eq!(identity.sha256, bundle_sha256(&per_file));
+    }
+
+    fn timed(start: u64, end: u64, text: &str) -> TimedText {
+        TimedText {
+            start: TimestampUs(start),
+            end: TimestampUs(end),
+            text: text.to_owned(),
+        }
+    }
+
+    #[test]
+    fn merge_groups_micro_segments_and_splits_on_punctuation_or_pause() {
+        let merged = merge_timed_text(vec![
+            timed(0, 900_000, "Ciao"),
+            timed(1_000_000, 1_800_000, "come stai?"),
+            timed(2_000_000, 2_900_000, "Bene"),
+            timed(21_000_000, 21_900_000, "dopo"),
+        ]);
+
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].text, "Ciao come stai?");
+        assert_eq!(merged[0].start, TimestampUs(0));
+        assert_eq!(merged[0].end, TimestampUs(1_800_000));
+        assert_eq!(merged[1].text, "Bene");
+        assert_eq!(merged[2].text, "dopo");
+    }
+
+    #[test]
+    fn merge_caps_a_line_at_twenty_seconds() {
+        let pieces = (0..5)
+            .map(|index| timed(index * 5_000_000, (index + 1) * 5_000_000, "parola"))
+            .collect();
+
+        let merged = merge_timed_text(pieces);
+
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].start, TimestampUs(0));
+        assert_eq!(merged[0].end, TimestampUs(20_000_000));
+        assert_eq!(merged[0].text, "parola parola parola parola");
+        assert_eq!(merged[1].start, TimestampUs(20_000_000));
+    }
+
+    #[test]
+    fn default_batch_wraps_the_live_transcription() {
+        struct FixedAsr;
+
+        impl AsrEngine for FixedAsr {
+            fn transcribe(
+                &mut self,
+                _segment: &SpeechSegment,
+                _language: &str,
+                _config: &InferenceConfig,
+            ) -> Result<AsrOutput> {
+                Ok(AsrOutput {
+                    text: "  ciao  ".to_owned(),
+                    inference_duration_us: 1,
+                })
+            }
+        }
+
+        let pieces = FixedAsr
+            .transcribe_batch(
+                &vec![0.0; 16_000],
+                "it",
+                &InferenceConfig::default(),
+                &Progress::new(|_| {}),
+            )
+            .expect("default batch should work");
+
+        assert_eq!(pieces.len(), 1);
+        assert_eq!(pieces[0].text, "ciao");
+        assert_eq!(pieces[0].start, TimestampUs(0));
+        assert_eq!(pieces[0].end, TimestampUs(1_000_000));
     }
 
     #[test]

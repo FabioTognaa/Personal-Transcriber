@@ -1,0 +1,59 @@
+{
+  "generated_at_unix_ms": 1793814500003,
+  "hardware": {
+    "os_version": "27.0.1",
+    "chip": "Apple M5",
+    "cpu_cores": 10,
+    "performance_cores": 4,
+    "efficiency_cores": 6,
+    "gpu": "Apple M5 10-core Metal 4",
+    "memory_bytes": "34359738368"
+  },
+  "model": {
+    "path": "models/ggml-large-v3-turbo-q8_0.bin",
+    "sha256": "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1"
+  },
+  "metal": {
+    "active": true,
+    "use_gpu": true,
+    "gpu_name": "Apple M5",
+    "tensor_api": false,
+    "embedded_library": true,
+    "note": "the 'error compiling source' line is the tensor API probe; the embedded Metal library loads and the GPU is used"
+  },
+  "flash_attention": {
+    "input": "sessions/26-10-26_fabiofabio/audio/mixed.wav (18 s)",
+    "on": {
+      "rtf": 0.1166,
+      "rss_bytes": 1162625024
+    },
+    "off": {
+      "rtf": 0.15,
+      "rss_bytes": 1166295040
+    },
+    "decision": "keep flash attention on: ~29% faster"
+  },
+  "thread_sweep": {
+    "input": "target/validation/prefix-20min.mp3 (1200 s)",
+    "runs": {
+      "4": {
+        "rtf": 0.1134,
+        "rss_bytes": 1364623360
+      },
+      "6": {
+        "rtf": 0.1128,
+        "rss_bytes": 1367916544
+      },
+      "8": {
+        "rtf": 0.113,
+        "rss_bytes": 1368801280
+      },
+      "10": {
+        "rtf": 0.1127,
+        "rss_bytes": 1368965120
+      }
+    },
+    "decision": "flat; keep the default 8 threads"
+  },
+  "verdict": "Metal is active, so the measurements are not CPU-only. Flash attention on is clearly faster. Thread count has no measurable effect with the GPU. No cheap tuning gain remains; the next lever is the engine (Parakeet) or a different backend (Core ML/MLX)."
+}

@@ -442,7 +442,7 @@ mod tests {
         let temporary = tempfile::tempdir().expect("temp directory should be created");
         let model = temporary
             .path()
-            .join(crate::model::ModelPreset::Small.artifact_name());
+            .join(crate::model::ModelPreset::LargeV3Turbo.artifact_name());
         std::fs::write(&model, b"not the documented model").expect("fixture should be written");
 
         assert_eq!(model_check(&model).status, CheckStatus::Fail);

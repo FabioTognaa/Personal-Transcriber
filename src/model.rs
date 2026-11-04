@@ -26,8 +26,6 @@ pub fn models_dir() -> PathBuf {
 /// Built-in model choices exposed as `--model-preset`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum ModelPreset {
-    /// Whisper small, Q5_1 (~190 MB). The original v1 model.
-    Small,
     /// Whisper medium, Q5_0 (~540 MB).
     Medium,
     /// Whisper large-v3-turbo, Q8_0 (~874 MB). Best Whisper quality/speed trade-off.
@@ -40,8 +38,7 @@ pub enum ModelPreset {
 
 impl ModelPreset {
     /// All presets, in declaration order.
-    pub const ALL: [ModelPreset; 5] = [
-        Self::Small,
+    pub const ALL: [ModelPreset; 4] = [
         Self::Medium,
         Self::LargeV3Turbo,
         Self::LargeV3,
@@ -52,7 +49,6 @@ impl ModelPreset {
     #[must_use]
     pub const fn artifact_name(self) -> &'static str {
         match self {
-            Self::Small => "ggml-small-q5_1.bin",
             Self::Medium => "ggml-medium-q5_0.bin",
             Self::LargeV3Turbo => "ggml-large-v3-turbo-q8_0.bin",
             Self::LargeV3 => "ggml-large-v3-q5_0.bin",
@@ -64,7 +60,6 @@ impl ModelPreset {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Small => "small",
             Self::Medium => "medium",
             Self::LargeV3Turbo => "large-v3-turbo",
             Self::LargeV3 => "large-v3",
@@ -256,33 +251,6 @@ pub struct KnownModel {
 /// bundle comes from `istupakov/parakeet-tdt-0.6b-v3-onnx` (CC-BY-4.0).
 pub const KNOWN_MODELS: &[KnownModel] = &[
     KnownModel {
-        name: "ggml-small-q5_1.bin",
-        kind: ArtifactKind::SingleFile,
-        files: &[KnownFile {
-            name: "ggml-small-q5_1.bin",
-            size_bytes: 190_085_487,
-            sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
-        }],
-    },
-    KnownModel {
-        name: "ggml-small-q8_0.bin",
-        kind: ArtifactKind::SingleFile,
-        files: &[KnownFile {
-            name: "ggml-small-q8_0.bin",
-            size_bytes: 264_464_607,
-            sha256: "49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317f779f",
-        }],
-    },
-    KnownModel {
-        name: "ggml-small.bin",
-        kind: ArtifactKind::SingleFile,
-        files: &[KnownFile {
-            name: "ggml-small.bin",
-            size_bytes: 487_601_967,
-            sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
-        }],
-    },
-    KnownModel {
         name: "ggml-medium-q5_0.bin",
         kind: ArtifactKind::SingleFile,
         files: &[KnownFile {
@@ -400,8 +368,8 @@ mod tests {
     #[test]
     fn presets_resolve_under_the_models_directory() {
         assert_eq!(
-            ModelPreset::Small.default_path(),
-            models_dir().join("ggml-small-q5_1.bin")
+            ModelPreset::Medium.default_path(),
+            models_dir().join("ggml-medium-q5_0.bin")
         );
         assert_eq!(
             ModelPreset::LargeV3Turbo.default_path(),
@@ -414,14 +382,14 @@ mod tests {
     }
 
     #[test]
-    fn documented_v1_model_is_known() {
-        let model = known_model("ggml-small-q5_1.bin").expect("the v1 model is documented");
+    fn documented_medium_model_is_known() {
+        let model = known_model("ggml-medium-q5_0.bin").expect("the medium model is documented");
 
         assert_eq!(model.kind, ArtifactKind::SingleFile);
-        assert_eq!(model.files[0].size_bytes, 190_085_487);
+        assert_eq!(model.files[0].size_bytes, 539_212_467);
         assert_eq!(
             model.files[0].sha256,
-            "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb"
+            "19fea4b380c3a618ec4723c3eef2eb785ffba0d0538cf43f8f235e7b3b34220f"
         );
     }
 

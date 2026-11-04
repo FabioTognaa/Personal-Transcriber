@@ -122,9 +122,6 @@ pub struct TranscribeArgs {
     pub model: ModelArgs,
 
     #[command(flatten)]
-    pub vad: VadArgs,
-
-    #[command(flatten)]
     pub inference: InferenceArgs,
 
     #[command(flatten)]
@@ -265,7 +262,11 @@ pub fn execute(command: Command) -> Result<()> {
                 microphone: args.microphone,
                 system_audio: args.system_audio,
                 segmenter: segmenter_config(&args.vad),
-                inference: inference_config(&args.inference, prompt),
+                inference: inference_config(
+                    &args.inference,
+                    prompt,
+                    crate::domain::default_temperature_inc(),
+                ),
                 model_identity: None,
                 session_name,
                 silence_timeout: Some(Duration::from_secs(args.silence_timeout * 60)),
@@ -297,8 +298,7 @@ pub fn execute(command: Command) -> Result<()> {
                 model,
                 sessions_dir: args.sessions.sessions_dir,
                 language,
-                segmenter: segmenter_config(&args.vad),
-                inference: inference_config(&args.inference, prompt),
+                inference: inference_config(&args.inference, prompt, 0.0),
                 session_name,
             })?;
             Ok(())
@@ -389,10 +389,15 @@ fn segmenter_config(vad: &VadArgs) -> SegmenterConfig {
     }
 }
 
-fn inference_config(inference: &InferenceArgs, prompt: Option<String>) -> InferenceConfig {
+fn inference_config(
+    inference: &InferenceArgs,
+    prompt: Option<String>,
+    temperature_inc: f32,
+) -> InferenceConfig {
     InferenceConfig {
         flash_attention: inference.asr_flash_attention,
         prompt,
+        temperature_inc,
         ..InferenceConfig::default()
     }
 }
@@ -838,6 +843,34 @@ mod tests {
             panic!("expected transcribe command");
         };
         assert_eq!(args.input, None);
+    }
+
+    #[test]
+    fn transcribe_rejects_vad_flags_that_only_start_accepts() {
+        assert!(
+            Cli::try_parse_from([
+                "scrib",
+                "transcribe",
+                "--model",
+                "models/fixture.bin",
+                "--vad-end-ms",
+                "800",
+            ])
+            .is_err(),
+            "transcribe no longer uses the live VAD"
+        );
+        assert!(
+            Cli::try_parse_from([
+                "scrib",
+                "start",
+                "--model",
+                "models/fixture.bin",
+                "--vad-end-ms",
+                "800",
+            ])
+            .is_ok(),
+            "start keeps the live VAD flags"
+        );
     }
 
     #[test]

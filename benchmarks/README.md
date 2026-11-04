@@ -14,7 +14,6 @@ Modelli Whisper documentati in `src/model.rs`:
 
 | Preset | File | Byte | SHA-256 (inizio) |
 | --- | --- | ---: | --- |
-| `small` | `ggml-small-q5_1.bin` | 190.085.487 | `ae85e4a9…` |
 | `medium` | `ggml-medium-q5_0.bin` | 539.212.467 | `19fea4b3…` |
 | `large-v3-turbo` | `ggml-large-v3-turbo-q8_0.bin` | 874.188.075 | `317eb69c…` |
 | `large-v3` | `ggml-large-v3-q5_0.bin` | 1.081.140.203 | `d75795ec…` |
@@ -56,16 +55,6 @@ sceglie la lingua e `--prompt` imposta il prompt iniziale, così si può misurar
 anche l'effetto del prompt. Il report registra i valori effettivi. WER e CER
 usano una normalizzazione minuscola senza punteggiatura; non sono metriche del
 transcript canonico, che conserva invece l'output ASR verbatim.
-
-## Risultato di riferimento
-
-Misura del 6 ottobre 2026 su Apple M5 con 32 GiB, macOS 27.0.1,
-`whisper-rs` 0.16.0 / whisper.cpp 1.8.3:
-
-| Fixture | Durata | RTF mediano | RTF p95 | WER | CER |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `italian_synthetic.wav` (small Q5_1) | 12,46 s | 0,072 | 0,078 | 5,88% | 0,47% |
-| `italian_public.wav` (small Q5_1) | 1,65 s | 0,245 | 0,253 | 0% | 0% |
 
 ## Confronto Whisper / Parakeet
 

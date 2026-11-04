@@ -5,7 +5,7 @@ use personal_transcriber::domain::{
     EngineKind, InferenceConfig, SessionConfig, SessionMetadata, SessionState, TimestampUs,
     TranscriptSegment,
 };
-use personal_transcriber::export::{self, Format};
+use personal_transcriber::export::{self, Format, SegmentLine, render_text_with_timestamps};
 use personal_transcriber::schema::{SCHEMA_VERSION, SESSION_METADATA_FILE, TRANSCRIPT_FILE};
 use uuid::Uuid;
 
@@ -76,6 +76,40 @@ fn partial_export_requires_explicit_opt_in() {
         true,
     )
     .expect("explicit partial export should succeed");
+}
+
+#[test]
+fn timestamped_txt_round_trips_to_plain_text_export() {
+    let temporary = tempfile::tempdir().expect("temp directory should be created");
+    let session = temporary.path().join("session");
+    fs::create_dir(&session).expect("session directory should be created");
+    write_session(&session);
+
+    let lines = [SegmentLine {
+        start: TimestampUs(1_234_000),
+        end: TimestampUs(2_345_000),
+        text: RAW_TEXT.to_owned(),
+    }];
+    let timestamped = render_text_with_timestamps(&lines);
+    fs::write(session.join("meeting.txt"), &timestamped).expect("timestamped txt");
+
+    let output = temporary.path().join("plain.txt");
+    export::export_session(&session, Format::Text, Some(&output), false)
+        .expect("text export should succeed");
+
+    let exported = fs::read_to_string(&output).expect("export should be readable");
+    let stripped = timestamped
+        .lines()
+        .map(|line| {
+            line.split_once("] ")
+                .map(|(_, text)| text)
+                .expect("timestamp prefix")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+
+    assert_eq!(exported, stripped);
 }
 
 fn write_session(session: &Path) {

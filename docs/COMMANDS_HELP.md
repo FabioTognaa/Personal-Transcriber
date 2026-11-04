@@ -25,21 +25,22 @@ Disponibili su tutti i comandi.
 | `-V`, `--version` | flag                  | —       | Stampa la versione del programma.                                                    |
 
 `--sessions-dir` non è globale: compare solo sui comandi che creano o
-indirizzano una sessione (`start`, `doctor`, `status`, `pause`, `resume`,
-`stop`). `devices`, `transcribe` ed `export` non lo espongono.
+indirizzano una sessione (`start`, `transcribe`, `doctor`, `status`, `pause`,
+`resume`, `stop`). `devices` ed `export` non lo espongono.
 
 ## Opzioni condivise
 
 Alcune opzioni sono definite una volta e riusate su più comandi. Le opzioni del
 **modello** e della **lingua** valgono per `start`, `transcribe` e `doctor`; le
-opzioni **VAD** e di **inferenza** valgono per `start` e `transcribe`.
+opzioni **VAD** valgono solo per `start`; quelle di **inferenza** valgono per
+`start` e `transcribe`.
 
 ### Modello e lingua
 
 | Opzione                 | Tipo         | Default | Descrizione                                                                                                                    |
 | ----------------------- | ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `--model <PERCORSO>`    | percorso     | —       | File GGML singolo oppure directory bundle Parakeet. Ha la precedenza su `--model-preset`.                                      |
-| `--model-preset <NOME>` | enum         | —       | Modello documentato risolto sotto `models/` (o `SCRIB_MODELS_DIR`). Valori: `small`, `medium`, `large-v3-turbo`, `large-v3`, `parakeet-v3`. |
+| `--model-preset <NOME>` | enum         | —       | Modello documentato risolto sotto `models/` (o `SCRIB_MODELS_DIR`). Valori: `medium`, `large-v3-turbo`, `large-v3`, `parakeet-v3`. |
 | `--language <LINGUA>`   | `it` \| `en` | `it`    | Lingua parlata. Per Parakeet è solo dichiarativa: il modello rileva la lingua da solo.                                         |
 | `--asr-prompt <TESTO>`  | testo        | prompt predefinito della lingua (solo Whisper) | Prompt iniziale per Whisper. `--asr-prompt ""` lo disattiva. Parakeet lo ignora.                           |
 
@@ -54,7 +55,6 @@ Preset e artefatti documentati:
 
 | Preset           | Artefatto                                      | Dimensione |
 | ---------------- | ---------------------------------------------- | ---------- |
-| `small`          | `models/ggml-small-q5_1.bin`                   | ~190 MB    |
 | `medium`         | `models/ggml-medium-q5_0.bin`                  | ~540 MB    |
 | `large-v3-turbo` | `models/ggml-large-v3-turbo-q8_0.bin`          | ~874 MB    |
 | `large-v3`       | `models/ggml-large-v3-q5_0.bin`                | ~1,1 GB    |
@@ -77,7 +77,8 @@ Parakeet è incluso nella build standard.
 
 ### Segmentazione vocale (VAD)
 
-Flag per impsotare i timing del riconscimento vocale, di seguito le impostazioni di default:
+Flag del solo `start`: il percorso batch di `transcribe` non usa il VAD e lascia
+la segmentazione a Whisper. Di seguito le impostazioni di default:
 
 | Opzione                         | Tipo     | Default | Descrizione                                             |
 | ------------------------------- | -------- | ------- | ------------------------------------------------------- |
@@ -163,14 +164,33 @@ la stessa di `stop` (stato `completed`) e l'evento `silence_timeout` in
 scrib transcribe [FILE] [opzioni]
 ```
 
-Trascrive un file audio esistente, senza registrare e senza conservare audio: in
-`sessions/` nasce una cartella nuova (stesso nome `YY-MM-DD` di `start`) con dentro
-solo `<nome>.txt`. Non sovrascrive mai nulla, perché la cartella è nuova; se la
-trascrizione fallisce non resta niente sul disco. Elabora un solo file per
-invocazione, in un unico thread.
+Trascrive un file audio esistente con un percorso batch dedicato: decodifica il
+file in streaming e fa **una sola** inferenza sull'intero audio, lasciando a
+Whisper la segmentazione nativa. Non usa il VAD del live e non conserva l'audio.
+I formati supportati sono `.wav`, `.mp3`, `.m4a`, `.mp4` e `.aac`; il vecchio
+limite di 64 MiB / 30 minuti per i WAV non esiste più.
 
-Anche `transcribe` chiede il nome della sessione su un terminale e, se `<FILE>`
-non è passato, chiede il percorso del file audio.
+In `sessions/` nasce una cartella nuova (stesso nome `YY-MM-DD` di `start`) con:
+
+```text
+session.json        lingua, modello, SHA-256, parametri, file di origine
+transcript.jsonl    la fonte canonica, un segmento per riga
+<nome>.txt          una riga per gruppo di segmenti (max 20 s), con i timestamp
+```
+
+Non ci sono `audio/`, `status.json`, `events.jsonl` né `current-session.json`:
+la cartella non è una sessione live e `status`, `pause`, `resume` e `stop` non la
+vedono. La directory viene creata solo a trascrizione finita; se la scrittura
+fallisce viene rimossa. Il comando stampa la directory, non il path del `.txt`.
+Per il testo senza timestamp:
+
+```sh
+scrib export sessions/<cartella> --format text
+```
+
+L'audio decodificato resta in memoria. Il limite è di 4 ore: oltre, il comando
+si ferma con un errore chiaro prima di chiamare il modello. Gli altri formati
+sono decodificati in streaming e non hanno il vecchio cap.
 
 Su un terminale mostra una barra di avanzamento su una riga sola: la percentuale
 già trascritta sul totale, non il tempo rimanente. Con l'output rediretto non
@@ -184,15 +204,11 @@ con `-v`.
 | `--model-preset <NOME>`        | enum         | —                  | Vedi “Modello e lingua”.                       |
 | `--language <LINGUA>`          | `it` \| `en` | `it`               | Vedi “Modello e lingua”.                       |
 | `--asr-prompt <TESTO>`         | testo        | predefinito lingua (solo Whisper) | Vedi “Modello e lingua”.                       |
-| `--vad-threshold <NUMERO>`     | decimale     | `0.02`             | Vedi “Segmentazione vocale”.                   |
-| `--vad-start-ms <MS>`          | intero       | `60`               | Vedi “Segmentazione vocale”.                   |
-| `--vad-end-ms <MS>`            | intero       | `800`              | Vedi “Segmentazione vocale”.                   |
 | `--asr-flash-attention <BOOL>` | booleano     | `true`             | Vedi “Inferenza”.                              |
 | `--sessions-dir <PERCORSO>`    | percorso     | `sessions`         | Directory in cui creare la cartella di output. |
 
-I WAV passano dal lettore in memoria, quindi ereditano il limite di 64 MiB e 30
-minuti; gli altri formati sono decodificati in streaming e non hanno tale
-limite.
+Con Parakeet i segmenti sono i chunk interni da 15 secondi: i timestamp sono
+reali ma possono spezzare una frase.
 
 ## Comandi per una sessione in atto
 
@@ -257,13 +273,14 @@ comandi di controllo sono rifiutati.
 scrib export <SESSIONE> [opzioni]
 ```
 
-Rilegge il file `transcript.jsonl` di una sessione e restituisce il testo in formato .txt e .md su console, senza
-modificarlo. Rifiuta come destinazione qualsiasi file canonico della sessione.
+Rilegge il file `transcript.jsonl` di una sessione (anche di una cartella creata
+da `transcribe`) e restituisce il testo nel formato scelto, senza modificarlo.
+Rifiuta come destinazione qualsiasi file canonico della sessione.
 
 | Argomento/Opzione           | Tipo     | Default         | Descrizione                                                                 |
 | --------------------------- | -------- | --------------- | --------------------------------------------------------------------------- |
-| `<SESSIONE>` (argomento)    | percorso | richiesto       | Directory della sessione.                                                   |
-| `--format <FORMATO>`        | enum     | `markdown`      | `jsonl`, `text`, `markdown`, `srt` o `vtt`.                                 |
+| `<SESSIONE>` (argomento)    | percorso | richiesto       | Directory della sessione o della trascrizione.                              |
+| `--format <FORMATO>`        | enum     | `markdown`      | `jsonl`, `text`, `markdown`, `srt` o `vtt`. `text` è il testo puro senza timestamp. |
 | `-o`, `--output <PERCORSO>` | percorso | standard output | File di destinazione. La scrittura è atomica.                               |
 | `--allow-partial`           | flag     | spento          | Consente l'export di una sessione non completata (fallita o ancora attiva). |
 
@@ -274,7 +291,7 @@ scrib devices
 scrib doctor --probe-audio
 scrib start --language it
 scrib start --model-preset large-v3-turbo --language it
-scrib transcribe riunione.mp3 --language @it
+scrib transcribe riunione.mp3 --language it
 scrib status
 scrib pause
 scrib resume

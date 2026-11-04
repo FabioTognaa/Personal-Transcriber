@@ -4,14 +4,31 @@ use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
-use personal_transcriber::asr::{AsrEngine, load_engine, model_identity, sha256_file};
-use personal_transcriber::audio::FileAudioSource;
+use personal_transcriber::asr::{
+    AsrEngine, Progress, load_engine, merge_timed_text, model_identity, sha256_file,
+};
+use personal_transcriber::audio::DecodedAudioSource;
 use personal_transcriber::domain::{
-    EngineKind, InferenceConfig, InferenceStrategy, SpeechSegment, TARGET_SAMPLE_RATE_HZ,
-    TimestampUs, default_threads,
+    EngineKind, InferenceConfig, InferenceStrategy, TARGET_SAMPLE_RATE_HZ, default_threads,
+    samples_to_us,
 };
 use personal_transcriber::model::ModelArtifact;
 use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+enum Strategy {
+    Greedy,
+    BeamSearch,
+}
+
+impl From<Strategy> for InferenceStrategy {
+    fn from(strategy: Strategy) -> Self {
+        match strategy {
+            Strategy::Greedy => Self::Greedy,
+            Strategy::BeamSearch => Self::BeamSearch,
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(about = "Reproducible local whisper.cpp benchmark")]
@@ -34,6 +51,10 @@ struct Args {
     iterations: usize,
     #[arg(long, default_value_t = default_threads())]
     threads: i32,
+    #[arg(long, value_enum, default_value_t = Strategy::BeamSearch)]
+    strategy: Strategy,
+    #[arg(long, default_value_t = 0.0)]
+    temperature_inc: f32,
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     flash_attention: bool,
     #[arg(long, default_value_t = false, action = clap::ArgAction::Set)]
@@ -110,43 +131,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let config = InferenceConfig {
         threads: args.threads,
-        strategy: InferenceStrategy::BeamSearch,
+        strategy: args.strategy.into(),
         best_of: 5,
         beam_size: 5,
         temperature: 0.0,
+        temperature_inc: args.temperature_inc,
         flash_attention: args.flash_attention,
         coreml: args.coreml,
         prompt: args.prompt.clone(),
     };
     let artifact = ModelArtifact::detect(&args.model)?;
     let identity = model_identity(&artifact)?;
-    let source = FileAudioSource::open(&args.input)?;
-    let samples = source
-        .chunks()
-        .flat_map(|chunk| chunk.samples)
-        .collect::<Vec<_>>();
-    let duration_us = samples.len() as u64 * 1_000_000 / u64::from(TARGET_SAMPLE_RATE_HZ);
-    let segment = SpeechSegment {
-        start: TimestampUs(0),
-        end: TimestampUs(duration_us),
-        samples,
-    };
+    let mut source = DecodedAudioSource::open(&args.input)?;
+    let mut samples = Vec::new();
+    while let Some(chunk) = source.next_chunk()? {
+        samples.extend_from_slice(&chunk.samples);
+    }
+    let duration_us = samples_to_us(samples.len());
 
     let load_started = Instant::now();
     let mut engine = load_engine(&artifact, &config)?;
     let model_load_us = elapsed_us(load_started);
+    let progress = Progress::new(|_| {});
     for _ in 0..args.warmup {
-        engine.transcribe(&segment, &args.language, &config)?;
+        engine.transcribe_batch(&samples, &args.language, &config, &progress)?;
     }
 
     let mut runs = Vec::with_capacity(args.iterations);
     for iteration in 0..args.iterations {
-        let output = engine.transcribe(&segment, &args.language, &config)?;
+        let started = Instant::now();
+        let pieces = engine.transcribe_batch(&samples, &args.language, &config, &progress)?;
+        let inference_us = elapsed_us(started);
+        let text = merge_timed_text(pieces)
+            .iter()
+            .map(|piece| piece.text.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
         runs.push(Run {
             iteration,
-            inference_us: output.inference_duration_us,
-            rtf: output.inference_duration_us as f64 / duration_us as f64,
-            text: output.text,
+            inference_us,
+            rtf: inference_us as f64 / duration_us as f64,
+            text,
         });
     }
     let mut rtfs = runs.iter().map(|run| run.rtf).collect::<Vec<_>>();

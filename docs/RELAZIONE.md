@@ -240,7 +240,7 @@ Il progetto si appoggia a `whisper-rs` per usare whisper.cpp in locale. Fa girar
    - **encoder**: un transformer traduce lo spettrogramma in feature acustiche;
    - **decoder**: genera i token del testo uno alla volta, con la strategia scelta (beam search o greedy), fermandosi al token di fine;
    - **segmenti e timestamp**: Whisper produce micro-segmenti con i propri timestamp.
-6. I timestamp interni di Whisper vengono ignorati. Il programma concatena il testo di tutti i micro-segmenti in un'unica stringa e associa a quella stringa l'intervallo deciso dal VAD, non quello di Whisper. La granularità temporale del transcript è quindi quella dei segmenti, non delle singole parole.
+6. Nel percorso live i timestamp interni di Whisper vengono ignorati. Il programma concatena il testo di tutti i micro-segmenti in un'unica stringa e associa a quella stringa l'intervallo deciso dal VAD, non quello di Whisper. La granularità temporale del transcript live è quindi quella dei segmenti, non delle singole parole. Il percorso batch di `transcribe`, invece, conserva i segmenti nativi e i loro timestamp.
 
 ## Parakeet
 
@@ -262,6 +262,20 @@ grafo viene spezzato e su questa macchina la CPU è risultata più veloce e più
 precisa. I pesi restano in RAM in ogni caso: su Apple Silicon CPU e GPU condividono
 la stessa memoria. Il prompt di Whisper non viene passato; Parakeet non ha
 glossario e rileva la lingua da solo.
+
+## Percorso batch di `transcribe`
+
+`transcribe` non passa dal segmentatore live. Decodifica il file in streaming con
+symphonia (WAV compreso) e accumula i campioni a 16 kHz mono; poi fa **una sola**
+passata sul motore. Whisper restituisce i segmenti nativi con i timestamp;
+Parakeet restituisce un segmento per chunk interno da 15 s. `temperature_inc` è
+`0` per non pagare i retry del fallback, mentre nel live resta `0,2`.
+
+Il batch tiene in memoria l'audio decodificato: il limite è di 4 ore, oltre le
+quali il comando si ferma con un errore chiaro. La cartella prodotta contiene
+`session.json`, `transcript.jsonl` e `<stem>.txt` con i timestamp; `export
+--format text` rigenera il testo puro dallo stesso JSONL. Non ci sono audio,
+`status.json` o `current-session.json`: non è una sessione live.
 
 ## Da segmento a testo
 
@@ -336,6 +350,10 @@ sessions/YY-MM-DD/
   audio/system.wav       solo cattura live
 ```
 
+Una cartella creata da `transcribe` è più leggera: contiene solo `session.json`,
+`transcript.jsonl` e `<stem>.txt`. Non ha `audio/`, `status.json`,
+`events.jsonl` né `control.json`, e non è puntata da `current-session.json`.
+
 `session.json` è la descrizione stabile: lingua, percorso del modello, identità
 SHA-256, dispositivi o file di origine, soglie VAD, parametri ASR e prompt
 iniziale. `events.jsonl` è il diario. `transcript.jsonl` è la fonte da cui derivano
@@ -352,10 +370,13 @@ Gli stati possibili sono `starting`, `running`, `transcription_paused`, `stoppin
 `export` rilegge il JSONL, controlla che ogni riga appartenga alla sessione, che i
 tempi siano ordinati e che la fine non preceda l'inizio, poi rende lo stesso testo:
 
-- `text`: le frasi una dopo l'altra;
+- `text`: le frasi una dopo l'altra, senza timestamp;
 - `markdown`: le frasi con i timestamp;
 - `srt` e `vtt`: sottotitoli temporizzati;
 - `jsonl`: le stesse righe canoniche.
+
+Il `.txt` scritto da `transcribe` è la rappresentazione con timestamp; `export
+--format text` produce la versione senza, dallo stesso JSONL.
 
 Senza `--output` il risultato va sullo standard output. Con `--output`, la scrittura
 è atomica: prima un file temporaneo, poi la rinomina. Non può puntare a

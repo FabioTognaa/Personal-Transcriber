@@ -27,11 +27,12 @@ Vorrei anche io una cosa del genere al menù, in particolare vorrei che lo stile
 - le animazioni devono essere fluide e non interferire con la ux in alcun modo
 - in generale deve essere una cosa elegante, leggera e non invasiva
 
-............................................................................
+...........................................................................
 MIGLIORARE PRESTAZIONI TRASCRIBER
 Occorre assolutamente che il comando transcribe funzioni più velocemente, ad oggi è veramente lento
 
 - capire se il problema è tecnico (pesantezza del modello) o algoritmico(dal momento che questa funzionalità non è live possiamo anche fare in modo che usi dinamiche di trascrizione diverse e più veloci)
+..............................................................
 
 
 BUG USCITA AUDIO DI BLACKHOLE:

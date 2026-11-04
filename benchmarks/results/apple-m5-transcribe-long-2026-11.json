@@ -1,0 +1,140 @@
+{
+  "generated_at_unix_ms": 1793798987138,
+  "kind": "transcribe_long_validation",
+  "hardware": {
+    "os_version": "27.0.1",
+    "chip": "Apple M5",
+    "memory_bytes": "34359738368"
+  },
+  "input": {
+    "name": "Dormire Meglio - La Scienza del Sonno ｜ Lifestyle Science [Wq-Y96ccmPU].mp3",
+    "sha256": "66758ef643364f1161180b9cc6271a999514a033ba54635ac7c3ca73a881d0a3",
+    "duration_us": 4453285458,
+    "format": "mp3",
+    "sample_rate_hz": 48000,
+    "channels": 2
+  },
+  "models": {
+    "whisper": {
+      "path": "models/ggml-large-v3-turbo-q8_0.bin",
+      "sha256": "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
+      "size_bytes": 874188075
+    },
+    "parakeet": {
+      "path": "models/parakeet-tdt-0.6b-v3-onnx",
+      "sha256": "2a0df29eec0ce03d19740b4e449217c1fd37e7a22f4c15a9b5b94e0181fa17d1",
+      "size_bytes": 670619803
+    }
+  },
+  "full_file": {
+    "old_transcribe": {
+      "wall_seconds": 757.96,
+      "max_rss_bytes": 1241874432,
+      "txt_lines": 232,
+      "chars": 64388,
+      "words": 10118
+    },
+    "new_transcribe": {
+      "wall_seconds": 529.38,
+      "max_rss_bytes": 2014593024,
+      "txt_lines": 249,
+      "chars": 63252,
+      "words": 10195,
+      "asr_calls": 1,
+      "native_segments": 3999,
+      "merged_lines": 249
+    },
+    "new_transcribe_second_run": {
+      "wall_seconds": 745.5,
+      "max_rss_bytes": 2015363072,
+      "note": "same work in user/sys time; wall time inflated by GPU/Metal contention, not used"
+    }
+  },
+  "prefix_20_min": {
+    "old_runs_seconds": [
+      187.81,
+      195.8
+    ],
+    "new_runs_seconds": [
+      133.55,
+      141.13
+    ],
+    "old_median_seconds": 191.805,
+    "new_median_seconds": 137.34,
+    "speedup": 1.3966,
+    "old_max_rss_bytes": [
+      1232830464,
+      1252147200
+    ],
+    "new_max_rss_bytes": [
+      1372651520,
+      1372635136
+    ],
+    "text": {
+      "old_words": 2464,
+      "new_words": 2448,
+      "word_overlap": 0.9756,
+      "old_lines": 63,
+      "new_lines": 80
+    }
+  },
+  "tuning": {
+    "input": "target/validation/prefix-20min.mp3",
+    "note": "benchmark ran without the default Italian prompt; both strategies share the same conditions",
+    "beam": {
+      "rtf": 0.1206,
+      "max_rss_bytes": 1368276992,
+      "words": 2513
+    },
+    "greedy": {
+      "rtf": 0.1048,
+      "max_rss_bytes": 1287274496,
+      "words": 2049,
+      "word_overlap_vs_beam": 0.8198
+    },
+    "decision": "keep beam_search: greedy is 13.1% faster, below the 20% gate, drops ~18% of words and shows visible errors"
+  },
+  "parakeet": {
+    "input": "target/validation/prefix-20min.mp3",
+    "rtf": 0.0322,
+    "max_rss_bytes": 1268301824,
+    "words": 2464,
+    "word_overlap_vs_whisper_beam": 0.9488,
+    "decision": "explicit choice for transcribe; not an automatic replacement of Whisper"
+  },
+  "round_trip": "export --format text identical to the timestamped txt after stripping prefixes",
+  "verdict": "1.40x on continuous speech and 1.60x on the quiet 428 s file; text on that file goes from 756 to 4654 chars. Text 97.6% word overlap on the continuous prefix; RSS 1.88 GiB at 74 min. Merge of native micro-segments reduces 3999 rows to 249 readable lines.",
+  "silence_428s": {
+    "input": "sessions/26-11-04_reti/audio/mixed.wav",
+    "duration_us": 428074687,
+    "old_wall_seconds": 75.86,
+    "new_wall_seconds": 47.54,
+    "speedup": 1.595,
+    "old_max_rss_bytes": 1269923840,
+    "new_max_rss_bytes": 1294925824,
+    "old_chars": 756,
+    "new_chars": 4654,
+    "old_words": 119,
+    "new_words": 752,
+    "old_lines": 39,
+    "new_lines": 42,
+    "whisper_batch": {
+      "wall_seconds": 48.54,
+      "max_rss_bytes": 1294876672,
+      "chars": 4654,
+      "words": 781,
+      "lines": 42
+    },
+    "parakeet": {
+      "wall_seconds": 15.1,
+      "max_rss_bytes": 1218658304,
+      "chars": 3388,
+      "words": 576,
+      "lines": 26,
+      "word_ratio_vs_whisper": 0.7375,
+      "word_overlap_vs_whisper": 0.6367,
+      "max_repeated_3gram": 3
+    },
+    "verdict": "Parakeet is 3.21x faster and uses slightly less RSS, but on this quiet technical recording it keeps only 74% of Whisper's words and 63.7% word overlap. Whisper batch is the completeness winner here; Parakeet's quality is content-dependent (92.2% on the 3 h live, 63.7% here)."
+  }
+}

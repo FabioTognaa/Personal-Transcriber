@@ -13,9 +13,15 @@ L'ordinamento alfabetico coincide con quello cronologico per giorno; dentro lo s
 Questo nome comunque non funge da identificare. Puoi trovare l'UUID `current-session.json`.
 
 Anche `transcribe` crea una cartella qui (stesso nome `YY-MM-DD`, `_2`, `_3`… su
-collisione), ma è **inerte**: contiene solo il `<nome>.txt` prodotto, senza
-`session.json`, `audio/`, eventi o transcript canonico. Non è una sessione e nessun
-comando la scopre.
+collisione), ma non è una sessione live: contiene solo `session.json`,
+`transcript.jsonl` e `<nome>.txt` con i timestamp, senza `audio/`, eventi,
+`status.json` o `current-session.json`. Non viene scoperta da `status`, `pause`,
+`resume` o `stop`, ma può essere letta da `export` come qualsiasi altra sessione
+completata:
+
+```sh
+scrib export sessions/<cartella> --format text
+```
 
 Ogni registrazione e transcript resta sul disco locale e viene ignorata nel
 repository.

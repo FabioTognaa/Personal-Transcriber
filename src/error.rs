@@ -48,6 +48,11 @@ pub enum Error {
     #[error("unsupported audio input: {0}")]
     UnsupportedAudio(String),
 
+    #[error(
+        "audio is {duration_secs} seconds long; `transcribe` accepts at most {limit_secs} seconds"
+    )]
+    AudioTooLong { duration_secs: u64, limit_secs: u64 },
+
     #[error("refusing to overwrite existing file: {}", .0.display())]
     OutputExists(PathBuf),
 
