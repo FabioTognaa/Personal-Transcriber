@@ -77,7 +77,7 @@ pub struct DoctorArgs {
     #[arg(long, requires = "probe_audio")]
     pub microphone: Option<String>,
 
-    /// Exact system input name used by the audio probe; defaults to BlackHole.
+    /// Exact external input used by the audio probe; defaults to the native system audio tap.
     #[arg(long, requires = "probe_audio")]
     pub system_audio: Option<String>,
 
@@ -91,7 +91,7 @@ pub struct StartArgs {
     #[arg(long)]
     pub microphone: Option<String>,
 
-    /// Input device used for remote/system audio, normally BlackHole on macOS.
+    /// External input device to use instead of the native system audio tap.
     #[arg(long)]
     pub system_audio: Option<String>,
 

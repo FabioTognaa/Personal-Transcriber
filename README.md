@@ -9,7 +9,7 @@ I decided to write this program in order to build a personal tool which was usef
 The entire codebase it's been writing using an agentic AI: expecially by Sol 5.6 and Grok 4.7 for documentation.
 L'obiettivo principale era quello di esercitarmi nell'usare AI agentiche per scrivere prodotti software in modo efficace.
 
-Si tratta di un programma utilizzabile da terminale, che si collega all'audio del microfono e quello del dispositivo audio del pc tramite un proxy ( es. BlackHole per MacOS), producendo un elaborato testuale di quello che è stato registrato.  
+Si tratta di un programma utilizzabile da terminale, che registra il microfono e l'audio di sistema (tramite Core Audio tap su macOS 14.2+, senza driver virtuali) e produce un elaborato testuale di quello che è stato registrato.  
 L'intera pipeline di lavoro si svolge in locale, così come la conservazione di ogni elaborato, salvaguardando privacy e sicurezza.
 
 # Installazioni in base al tuo Sistema Operativo
@@ -67,7 +67,7 @@ Viene poi **caricato il motore dedotto dall'artefatto scelto**:
 Il motore viene dato ad un thread worker, che a seconda del compito lo usa liberamente.
 
 - valida la --sessions-dir; prende il lock esclusivo sessions/.runner.lock (un solo start alla volta); recupera una sessione rimasta running da un crash precedente marcandola failed.
-- risolve la sorgente: microfono = input di default (o --microphone); sistema = BlackHole (o --system-audio); i due devono essere dispositivi diversi.
+- risolve la sorgente: microfono = input di default (o --microphone); sistema = Core Audio tap (macOS 14.2+), oppure un input esterno quando si passa --system-audio; i due devono essere diversi.
 - crea il Segmenter, controlla lo spazio disco (live: ≥ 64 MiB, ricontrollo ogni 5 s).
 - crea sessions/YY-MM-DD/ (giorno locale, \_2, \_3… se collide) con session.json, status.json, events.jsonl, transcript.jsonl, audio/{mixed,microphone,system}.wav.
 - sink.start() avvia il thread worker ASR (apre transcript.jsonl).
@@ -106,6 +106,9 @@ reali ma possono spezzare una frase.
 ## Limiti noti
 
 - La v1 supporta macOS su Apple Silicon; Windows e Linux non sono supportati.
+- La cattura audio di sistema nativa richiede macOS 14.2 o successivo e il permesso
+  **System Audio Recording**. Senza il permesso `start` e `doctor` escono con un
+  errore che spiega come concederlo, invece di registrare silenzio.
 - La lingua deve essere scelta esplicitamente tra italiano e inglese; non esiste
   rilevamento automatico. Per Parakeet `--language` è solo dichiarativa: il
   modello rileva la lingua da solo.

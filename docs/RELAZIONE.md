@@ -12,7 +12,8 @@ Parakeet](PARAKEET_PLAN.md) e gli [ADR](adr/).
 ## Cosa fa
 
 `scrib` è un programma da terminale. Durante una riunione registra sul Mac
-due audio — il microfono di chi parla e l'audio degli altri, letto tramite BlackHole —
+due audio — il microfono di chi parla e l'audio degli altri, catturato con i Core
+Audio process tap di macOS —
 li mescola, e scrive in italiano o inglese il testo di ciò che è stato detto.
 Tutto questo viene fatto in locale al 100%.
 Nessun audio e nessun testo partono verso un servizio esterno e viene garantita la privacy dei file prodotti.
@@ -116,12 +117,18 @@ Una volta conclusa la trascrizione nasce una cartella nuova sotto `sessions/` (s
 Il resto del programma non sa se i chunk arrivano da un file o da CoreAudio. Vede
 solo PCM mono a 16 kHz, con un timestamp in microsecondi dall'inizio della sessione.
 
-### Microfono e BlackHole
+### Microfono e audio di sistema
 
-Si aprono due stream `cpal` separati, ciascuno nel formato nativo del dispositivo
-(`f32`, `i16` o `u16`). Il callback di CoreAudio fa solo tre cose: converte i
-campioni in `f32`, segna l'istante rispetto a un orologio comune, e tenta di metterli
-in una coda da 512 blocchi. Non scrive su disco, non segmenta, non chiama Whisper.
+Il microfono è uno stream `cpal` nel formato nativo del dispositivo (`f32`, `i16` o
+`u16`). L'audio di sistema arriva invece da un **Core Audio process tap** (macOS
+14.2+): un oggetto HAL che rispecchia l'output degli altri processi, collegato a un
+aggregate device privato. Nessun driver virtuale e nessun Multi-Output Device.
+Se `--system-audio` è passato, si usa invece lo stream `cpal` di quel
+dispositivo esterno.
+
+In entrambi i casi il callback fa solo tre cose: converte i campioni in `f32`,
+segna l'istante rispetto a un orologio comune, e tenta di metterli in una coda da
+512 blocchi. Non scrive su disco, non segmenta, non chiama Whisper.
 
 Se la coda è piena, il callback incrementa un contatore e torna subito. Appena il
 loop vede un blocco perso, **ferma la sessione con un errore**. Non continua
@@ -385,7 +392,8 @@ ai WAV.
 
 `doctor` senza probe fallisce se manca una di queste condizioni: macOS su Apple
 Silicon (`aarch64`), directory di sessione utilizzabile, almeno 64 MiB liberi,
-modello indicato e leggibile, almeno un input, BlackHole visibile. Se l'artefatto
+modello indicato e leggibile, almeno un input, una sorgente per l'audio di sistema
+(tap nativo su macOS 14.2+ con permesso concesso). Se l'artefatto
 corrisponde a un modello documentato in `src/model.rs`, dimensione e SHA-256 devono
 essere quelli attesi; per un bundle viene verificato ogni file e viene nominato
 quello mancante o corrotto. Un altro nome di modello, se il file non è vuoto, passa
@@ -396,7 +404,7 @@ Il permesso del microfono e il routing vero della call restano non verificati fi
 non si usa `--probe-audio`, e anche quello dice solo se in quei secondi è arrivato
 segnale. Non può sapere se Zoom sta mandando l'audio al dispositivo giusto.
 
-La prova su una call reale, con BlackHole installato, non fa ancora parte di ciò
-che questo repository può garantire da solo. I controlli automatici coprono la
-pipeline sul WAV e le regole di sessione; l'ascolto del mix vero resta una verifica
-manuale.
+La prova su una call reale non fa ancora parte di ciò che questo repository può
+garantire da solo. I controlli automatici coprono la pipeline sul WAV e le regole
+di sessione; l'ascolto del mix vero e il permesso **System Audio Recording** del
+tap nativo restano verifiche manuali.

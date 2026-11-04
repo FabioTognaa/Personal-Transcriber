@@ -122,11 +122,14 @@ l'exit code è diverso da zero.
 | `--model-preset <NOME>`     | enum     | —                 | Preset da verificare se `--model` non è passato. Senza nessuno dei due, `doctor` fallisce.             |
 | `--probe-audio`             | flag     | spento            | Apre entrambi gli input live per tre secondi e verifica che arrivi segnale, senza creare una sessione. |
 | `--microphone <NOME>`       | testo    | input predefinito | Microfono usato dal probe. Richiede `--probe-audio`.                                                   |
-| `--system-audio <NOME>`     | testo    | BlackHole         | Input di sistema usato dal probe. Richiede `--probe-audio`.                                            |
+| `--system-audio <NOME>`     | testo    | Core Audio tap    | Input di sistema usato dal probe. Richiede `--probe-audio`.                                            |
 | `--sessions-dir <PERCORSO>` | percorso | `sessions`        | Directory delle sessioni da verificare.                                                                |
 
 Senza `--probe-audio`, permesso del microfono e routing reale restano non
-verificati e il report contiene un avviso.
+verificati e il report contiene un avviso. Se il tap nativo restituisce silenzio,
+il primo avvio della cattura non ha ottenuto il permesso **System Audio
+Recording**: concedilo in Impostazioni di Sistema → Privacy e sicurezza, oppure
+passa un dispositivo esterno con `--system-audio`.
 
 ### `start`
 
@@ -137,7 +140,7 @@ scrib start [opzioni]
 | Opzione                        | Tipo         | Default            | Descrizione                          |
 | ------------------------------ | ------------ | ------------------ | ------------------------------------ |
 | `--microphone <NOME>`          | testo        | input predefinito  | Dispositivo del microfono.           |
-| `--system-audio <NOME>`        | testo        | BlackHole rilevato | Dispositivo dell'audio di sistema.   |
+| `--system-audio <NOME>`        | testo        | Core Audio tap     | Input esterno al posto del tap nativo. |
 | `--silence-timeout <MINUTI>`   | intero 1–30  | `15`               | Chiude la sessione dopo N minuti di silenzio consecutivo. |
 | `--model <PERCORSO>`           | percorso     | —                  | Vedi “Modello e lingua”.             |
 | `--model-preset <NOME>`        | enum         | —                  | Vedi “Modello e lingua”.             |

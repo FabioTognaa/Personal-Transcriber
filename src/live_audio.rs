@@ -18,12 +18,12 @@ const RAW_RECEIVE_TIMEOUT: Duration = Duration::from_millis(100);
 const MAX_NORMALIZED_BUFFER_FRAMES: usize = TARGET_SAMPLE_RATE_HZ as usize * 5;
 
 #[derive(Debug)]
-struct RawInput {
-    source: AudioSourceKind,
-    captured_at_us: u64,
-    sample_rate_hz: u32,
-    channels: u16,
-    samples: Vec<f32>,
+pub(crate) struct RawInput {
+    pub(crate) source: AudioSourceKind,
+    pub(crate) captured_at_us: u64,
+    pub(crate) sample_rate_hz: u32,
+    pub(crate) channels: u16,
+    pub(crate) samples: Vec<f32>,
 }
 
 #[derive(Debug)]
@@ -36,17 +36,31 @@ pub struct LiveAudioChunk {
 
 pub struct LiveAudioConfig {
     microphone_name: String,
-    system_name: String,
+    system: SystemSource,
+}
+
+enum SystemSource {
+    /// Core Audio process tap: no virtual driver needed (macOS 14.2+).
+    NativeTap,
+    /// Explicit cpal input device used instead of the native system audio tap.
+    Device(String),
 }
 
 pub struct LiveAudioSource {
     microphone_name: String,
     system_name: String,
     microphone_stream: cpal::Stream,
-    system_stream: cpal::Stream,
+    system: SystemInput,
     raw_receiver: Receiver<RawInput>,
     stream_error_receiver: Receiver<String>,
     dropped_callbacks: Arc<AtomicU64>,
+}
+
+enum SystemInput {
+    Device(cpal::Stream),
+    Tap {
+        tap: crate::system_audio::SystemAudioTap,
+    },
 }
 
 pub fn probe(
@@ -71,6 +85,23 @@ pub fn probe(
     latest.ok_or_else(|| Error::Audio("audio probe received no complete mixed chunk".to_owned()))
 }
 
+pub fn ensure_system_audio_permission() -> Result<()> {
+    if !crate::system_audio::SystemAudioTap::is_available() {
+        return Err(Error::Audio(
+            "native system audio capture requires macOS 14.2 or later".to_owned(),
+        ));
+    }
+    match crate::system_audio::SystemAudioTap::permission() {
+        crate::system_audio::Permission::Authorized
+        | crate::system_audio::Permission::Unknown => Ok(()),
+        crate::system_audio::Permission::Denied
+        | crate::system_audio::Permission::NotDetermined => Err(Error::Audio(
+            "system audio permission is not granted; open System Settings > Privacy & Security > Screen & System Audio Recording, enable your terminal under \"System Audio Recording Only\", restart it, and retry. Alternatively pass --system-audio with an external input device."
+                .to_owned(),
+        )),
+    }
+}
+
 impl LiveAudioConfig {
     pub fn resolve(microphone_name: Option<&str>, system_name: Option<&str>) -> Result<Self> {
         let host = cpal::default_host();
@@ -83,47 +114,25 @@ impl LiveAudioConfig {
         let microphone_name = device_name(&microphone)?;
 
         let system = match system_name {
-            Some(name) => find_input_device(&host, name)?,
-            None => {
-                let mut matches = host
-                    .input_devices()
-                    .map_err(audio_error)?
-                    .filter_map(|device| {
-                        let name = device.name().ok()?;
-                        crate::diagnostics::is_blackhole(&name).then_some((name, device))
-                    })
-                    .collect::<Vec<_>>();
-                match matches.len() {
-                    1 => matches.pop().expect("one BlackHole device exists").1,
-                    0 => {
-                        return Err(Error::Audio(
-                            "no BlackHole input found; pass --system-audio with an exact device name"
-                                .to_owned(),
-                        ));
-                    }
-                    _ => {
-                        let names = matches
-                            .into_iter()
-                            .map(|(name, _)| format!("`{name}`"))
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        return Err(Error::Audio(format!(
-                            "multiple BlackHole inputs found ({names}); pass --system-audio with an exact device name"
-                        )));
-                    }
+            Some(name) => {
+                let device = find_input_device(&host, name)?;
+                let resolved = device_name(&device)?;
+                if resolved == microphone_name {
+                    return Err(Error::Audio(
+                        "microphone and system audio must be different input devices".to_owned(),
+                    ));
                 }
+                SystemSource::Device(resolved)
+            }
+            None => {
+                ensure_system_audio_permission()?;
+                SystemSource::NativeTap
             }
         };
-        let system_name = device_name(&system)?;
-        if microphone_name == system_name {
-            return Err(Error::Audio(
-                "microphone and system audio must be different input devices".to_owned(),
-            ));
-        }
 
         Ok(Self {
             microphone_name,
-            system_name,
+            system,
         })
     }
 
@@ -134,13 +143,15 @@ impl LiveAudioConfig {
 
     #[must_use]
     pub fn system_name(&self) -> &str {
-        &self.system_name
+        match &self.system {
+            SystemSource::NativeTap => crate::system_audio::LABEL,
+            SystemSource::Device(name) => name,
+        }
     }
 
     pub fn open(self) -> Result<LiveAudioSource> {
         let host = cpal::default_host();
         let microphone = find_input_device(&host, &self.microphone_name)?;
-        let system = find_input_device(&host, &self.system_name)?;
         let (raw_sender, raw_receiver) = bounded(RAW_QUEUE_CAPACITY);
         let (stream_error_sender, stream_error_receiver) = bounded(8);
         let dropped_callbacks = Arc::new(AtomicU64::new(0));
@@ -153,20 +164,36 @@ impl LiveAudioConfig {
             Arc::clone(&dropped_callbacks),
             capture_epoch,
         )?;
-        let system_stream = build_stream(
-            &system,
-            AudioSourceKind::System,
-            raw_sender,
-            stream_error_sender,
-            Arc::clone(&dropped_callbacks),
-            capture_epoch,
-        )?;
+        let system_name = match &self.system {
+            SystemSource::NativeTap => crate::system_audio::LABEL.to_owned(),
+            SystemSource::Device(name) => name.clone(),
+        };
+        let system = match self.system {
+            SystemSource::NativeTap => SystemInput::Tap {
+                tap: crate::system_audio::SystemAudioTap::create(
+                    raw_sender,
+                    capture_epoch,
+                    Arc::clone(&dropped_callbacks),
+                )?,
+            },
+            SystemSource::Device(name) => {
+                let device = find_input_device(&host, &name)?;
+                SystemInput::Device(build_stream(
+                    &device,
+                    AudioSourceKind::System,
+                    raw_sender,
+                    stream_error_sender,
+                    Arc::clone(&dropped_callbacks),
+                    capture_epoch,
+                )?)
+            }
+        };
 
         Ok(LiveAudioSource {
             microphone_name: self.microphone_name,
-            system_name: self.system_name,
+            system_name,
             microphone_stream,
-            system_stream,
+            system,
             raw_receiver,
             stream_error_receiver,
             dropped_callbacks,
@@ -186,12 +213,15 @@ impl LiveAudioSource {
     }
 
     pub fn run(
-        self,
+        mut self,
         shutdown: &AtomicBool,
         mut on_chunk: impl FnMut(LiveAudioChunk, bool) -> bool,
     ) -> Result<()> {
         self.microphone_stream.play().map_err(audio_error)?;
-        self.system_stream.play().map_err(audio_error)?;
+        match &mut self.system {
+            SystemInput::Device(stream) => stream.play().map_err(audio_error)?,
+            SystemInput::Tap { tap } => tap.play()?,
+        }
 
         let mut mixer = LiveMixer::new();
         while !shutdown.load(Ordering::Relaxed) {
@@ -408,6 +438,9 @@ struct LiveMixer {
     frames_emitted: u64,
     microphone_frames: u64,
     system_frames: u64,
+    /// Offset already present when the first chunk is emitted. Reported drift
+    /// measures growth from here, so the capture start does not look like drift.
+    drift_baseline_frames: Option<i128>,
     microphone_peak: f32,
     system_peak: f32,
     microphone_started_at_us: Option<u64>,
@@ -426,6 +459,7 @@ impl LiveMixer {
             frames_emitted: 0,
             microphone_frames: 0,
             system_frames: 0,
+            drift_baseline_frames: None,
             microphone_peak: 0.0,
             system_peak: 0.0,
             microphone_started_at_us: None,
@@ -555,7 +589,9 @@ impl LiveMixer {
             self.frames_emitted.saturating_mul(1_000_000) / u64::from(TARGET_SAMPLE_RATE_HZ),
         );
         self.frames_emitted = self.frames_emitted.saturating_add(frames as u64);
-        let drift_frames = self.microphone_frames as i128 - self.system_frames as i128;
+        let current_drift = self.microphone_frames as i128 - self.system_frames as i128;
+        let drift_baseline = *self.drift_baseline_frames.get_or_insert(current_drift);
+        let drift_frames = current_drift - drift_baseline;
         let drift_us = (drift_frames * 1_000_000 / i128::from(TARGET_SAMPLE_RATE_HZ))
             .clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64;
         let capture = CaptureMetrics {

@@ -119,15 +119,22 @@ impl SessionAudioSource {
                 }
                 Ok(())
             }
-            Self::Live(config) => config.open()?.run(shutdown, |chunk, finalizing| {
-                send_source_chunk(
-                    &sender,
-                    SessionAudioChunk::Live(chunk),
-                    max_queue_depth,
-                    shutdown,
-                    finalizing,
-                )
-            }),
+            Self::Live(config) => {
+                eprintln!(
+                    "Audio: microfono `{}` + sistema `{}`",
+                    config.microphone_name(),
+                    config.system_name()
+                );
+                config.open()?.run(shutdown, |chunk, finalizing| {
+                    send_source_chunk(
+                        &sender,
+                        SessionAudioChunk::Live(chunk),
+                        max_queue_depth,
+                        shutdown,
+                        finalizing,
+                    )
+                })
+            }
         }
     }
 }
@@ -253,6 +260,10 @@ fn best_effort_identity(artifact: &ModelArtifact) -> ModelIdentity {
 }
 
 pub fn run(options: StartOptions) -> Result<PathBuf> {
+    // Fail before loading a multi-hundred-MB model when the grant is missing.
+    if options.input_wav.is_none() && options.system_audio.is_none() {
+        crate::live_audio::ensure_system_audio_permission()?;
+    }
     let shutdown = ShutdownSignals::install()?;
     validate_language(&options.language)?;
     validate_inference_config(&options.inference)?;

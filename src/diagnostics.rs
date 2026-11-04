@@ -137,32 +137,40 @@ fn signal_checks(
     duration: Duration,
 ) -> Vec<DoctorCheck> {
     match crate::live_audio::probe(microphone, system_audio, duration) {
-        Ok(metrics) => vec![
-            signal_check(
-                "microphone_signal",
-                metrics.microphone_signal,
-                metrics.microphone_peak_milli,
-            ),
-            signal_check(
+        Ok(metrics) => {
+            let mut system_signal = signal_check(
                 "system_signal",
                 metrics.system_signal,
                 metrics.system_peak_milli,
-            ),
-            DoctorCheck {
-                name: "capture_integrity",
-                status: if metrics.callback_blocks_dropped > 0 {
-                    CheckStatus::Fail
-                } else if metrics.clock_drift_us.unsigned_abs() > 20_000 {
-                    CheckStatus::Warning
-                } else {
-                    CheckStatus::Pass
-                },
-                detail: format!(
-                    "{} callback block(s) dropped; measured clock drift {} us",
-                    metrics.callback_blocks_dropped, metrics.clock_drift_us
+            );
+            if !metrics.system_signal && system_audio.is_none() {
+                system_signal.detail.push_str(
+                    "; the native tap needs the System Audio Recording permission (or pass --system-audio)",
+                );
+            }
+            vec![
+                signal_check(
+                    "microphone_signal",
+                    metrics.microphone_signal,
+                    metrics.microphone_peak_milli,
                 ),
-            },
-        ],
+                system_signal,
+                DoctorCheck {
+                    name: "capture_integrity",
+                    status: if metrics.callback_blocks_dropped > 0 {
+                        CheckStatus::Fail
+                    } else if metrics.clock_drift_us.unsigned_abs() > 20_000 {
+                        CheckStatus::Warning
+                    } else {
+                        CheckStatus::Pass
+                    },
+                    detail: format!(
+                        "{} callback block(s) dropped; measured clock drift {} us",
+                        metrics.callback_blocks_dropped, metrics.clock_drift_us
+                    ),
+                },
+            ]
+        }
         Err(error) => vec![DoctorCheck {
             name: "audio_signal",
             status: CheckStatus::Fail,
@@ -372,10 +380,13 @@ fn device_checks() -> Vec<DoctorCheck> {
                 .iter()
                 .filter(|device| device.input.is_some())
                 .count();
-            let blackhole = inventory
-                .devices
-                .iter()
-                .find(|device| device.input.is_some() && is_blackhole(&device.name));
+            let native_tap = crate::system_audio::SystemAudioTap::is_available();
+            let permission = crate::system_audio::SystemAudioTap::permission();
+            let permitted = matches!(
+                permission,
+                crate::system_audio::Permission::Authorized
+                    | crate::system_audio::Permission::Unknown
+            );
             vec![
                 DoctorCheck {
                     name: "audio_inputs",
@@ -387,16 +398,19 @@ fn device_checks() -> Vec<DoctorCheck> {
                     detail: format!("{input_count} input device(s) visible through cpal"),
                 },
                 DoctorCheck {
-                    name: "blackhole",
-                    status: if blackhole.is_some() {
+                    name: "system_audio",
+                    status: if native_tap && permitted {
                         CheckStatus::Pass
                     } else {
                         CheckStatus::Fail
                     },
-                    detail: blackhole.map_or_else(
-                        || "no BlackHole input device is visible".to_owned(),
-                        |device| format!("found input device `{}`", device.name),
-                    ),
+                    detail: if !native_tap {
+                        "native Core Audio tap requires macOS 14.2 or later".to_owned()
+                    } else if permitted {
+                        "native Core Audio tap available (macOS 14.2+)".to_owned()
+                    } else {
+                        "permission not granted; enable your terminal under System Settings > Privacy & Security > Screen & System Audio Recording (System Audio Recording Only), then restart it".to_owned()
+                    },
                 },
             ]
         }
@@ -407,7 +421,7 @@ fn device_checks() -> Vec<DoctorCheck> {
                 detail: error.to_string(),
             },
             DoctorCheck {
-                name: "blackhole",
+                name: "system_audio",
                 status: CheckStatus::Fail,
                 detail: "device enumeration failed".to_owned(),
             },
@@ -415,20 +429,9 @@ fn device_checks() -> Vec<DoctorCheck> {
     }
 }
 
-pub fn is_blackhole(name: &str) -> bool {
-    name.to_ascii_lowercase().contains("blackhole")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn blackhole_matching_is_case_insensitive() {
-        assert!(is_blackhole("BlackHole 2ch"));
-        assert!(is_blackhole("blackhole 16ch"));
-        assert!(!is_blackhole("MacBook Pro Microphone"));
-    }
 
     #[test]
     fn missing_model_is_a_failed_check() {

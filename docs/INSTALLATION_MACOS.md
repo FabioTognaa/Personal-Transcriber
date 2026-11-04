@@ -2,12 +2,15 @@
 
 ## Requisiti
 
-- macOS su Apple Silicon
+- macOS 14.2 o successivo su Apple Silicon
 - Rust 1.88+
-- BlackHole.
+- Xcode Command Line Tools (`clang`, `libtool`)
 
-Installare e configurare BlackHole (se ancora non lo si possiede sulla machcina) seguendo la [guida macOS](BLACKHOLE_MACOS.md), quindi
-compilare:
+L'audio di sistema viene catturato direttamente con i Core Audio process tap:
+non serve installare driver virtuali né creare un Multi-Output Device. Al primo
+avvio della cattura macOS chiede il permesso **System Audio Recording**.
+
+Compilare:
 
 ## 1. Clonazione e configurazione dell'ambiente
 

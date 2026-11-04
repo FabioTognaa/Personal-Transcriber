@@ -36,8 +36,17 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
   costante. Il vecchio limite di 64 MiB / 30 minuti per i WAV non esiste più.
 - `transcribe` registra `temperature_inc = 0` nel batch per disattivare i retry
   del fallback di temperatura; il live resta a `0,2`.
+- Cattura nativa dell'audio di sistema tramite **Core Audio process tap**
+  (macOS 14.2+): `start` e `doctor --probe-audio` non richiedono più driver
+  virtuali né un Multi-Output Device. BlackHole non viene più rilevato
+  automaticamente; `--system-audio` resta per selezionare esplicitamente un
+  input esterno.
 
 ### Changed
+
+- La build richiede macOS 14.2 o successivo. `start` e `doctor` controllano il
+  permesso **System Audio Recording** e falliscono con un messaggio chiaro se
+  manca, invece di registrare silenzio.
 
 - I menu interattivi per nome della sessione e scelta del modello usano ora
   prompt a frecce con validazione in linea; `Esc`/`Ctrl-C` annulla.

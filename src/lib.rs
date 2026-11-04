@@ -15,6 +15,7 @@ pub mod schema;
 pub mod segment;
 pub mod session;
 pub mod storage;
+pub mod system_audio;
 pub mod transcribe;
 pub mod validation;
 

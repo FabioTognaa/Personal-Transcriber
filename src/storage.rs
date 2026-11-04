@@ -399,7 +399,7 @@ mod tests {
         let temporary = tempfile::tempdir().expect("temporary directory should be created");
         let mut config = SessionConfig::italian(None);
         config.microphone_device = Some("Test microphone".to_owned());
-        config.system_device = Some("BlackHole 2ch".to_owned());
+        config.system_device = Some("External input".to_owned());
         let metadata = SessionMetadata {
             schema_version: SCHEMA_VERSION,
             session_id: Uuid::new_v4(),
