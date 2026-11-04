@@ -4,12 +4,13 @@ use std::process::Command;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use clap::Parser;
-use personal_transcriber::asr::{AsrEngine, WhisperEngine, model_identity, sha256_file};
+use personal_transcriber::asr::{AsrEngine, load_engine, model_identity, sha256_file};
 use personal_transcriber::audio::FileAudioSource;
 use personal_transcriber::domain::{
-    InferenceConfig, InferenceStrategy, SpeechSegment, TARGET_SAMPLE_RATE_HZ, TimestampUs,
-    default_threads,
+    EngineKind, InferenceConfig, InferenceStrategy, SpeechSegment, TARGET_SAMPLE_RATE_HZ,
+    TimestampUs, default_threads,
 };
+use personal_transcriber::model::ModelArtifact;
 use serde::Serialize;
 
 #[derive(Debug, Parser)]
@@ -73,6 +74,7 @@ struct Model {
     name: String,
     sha256: String,
     size_bytes: u64,
+    engine: EngineKind,
     source: &'static str,
 }
 
@@ -116,7 +118,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         coreml: args.coreml,
         prompt: args.prompt.clone(),
     };
-    let identity = model_identity(&args.model)?;
+    let artifact = ModelArtifact::detect(&args.model)?;
+    let identity = model_identity(&artifact)?;
     let source = FileAudioSource::open(&args.input)?;
     let samples = source
         .chunks()
@@ -130,7 +133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let load_started = Instant::now();
-    let mut engine = WhisperEngine::load(&args.model, &config)?;
+    let mut engine = load_engine(&artifact, &config)?;
     let model_load_us = elapsed_us(load_started);
     for _ in 0..args.warmup {
         engine.transcribe(&segment, &args.language, &config)?;
@@ -189,7 +192,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             name: identity.name,
             sha256: identity.sha256,
             size_bytes: identity.size_bytes,
-            source: "https://huggingface.co/ggerganov/whisper.cpp",
+            engine: identity.engine,
+            source: match identity.engine {
+                EngineKind::Whisper => "https://huggingface.co/ggerganov/whisper.cpp",
+                EngineKind::Parakeet => {
+                    "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx"
+                }
+            },
         },
         input: Input {
             path: args.input.clone(),

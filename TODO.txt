@@ -9,14 +9,14 @@ In questo momento la CI fallisce su uno dei test per qualche ragione, va risolta
 .......................................
 
 FIX E PICCOLI CAMBIAMENTI 
-- attualmente il comando personal-transcriber può essere avviato ovunque, ma la cartella dei modelli non viene individuata: occorrono dei path assoluti per fare in modo che le mat dei pesi vengano individuate
-- cambiare nome del comando di avvio: personal-trascriber -> scrib
+- la cartella dei modelli si può ora impostare con SCRIB_MODELS_DIR (default models/); resta da definire un percorso assoluto per il binario installato
+- (fatto) nome del comando: scrib
 
-RENDERE IL V3 TURBO IL DEFAULT ATTUALE
-
-- il v3 turbo di whisper diventa lo standard progettuale del programma 
-- il menù di scelta deve presentare dinamicamente tutti i modelli che vengono inseriti nella cartella dei modelli 
-- la presentazione dei modelli nel menu deve avvenire in ordine di grandezza del modello stesso (quanto pesa in memoria)
+INSERIRE PARAKEET COME NUOVO MODELLO (fatto)
+- Parakeet TDT 0.6B v3 int8, incluso nella build standard
+- menu dinamico con i soli modelli presenti, ordinati per dimensione
+- nessun modello predefinito: la scelta è sempre esplicita
+- restano da misurare 3-4 riunioni reali con riferimento
 
 
 MIGLIORARE IL MENU' DELE SCELTE

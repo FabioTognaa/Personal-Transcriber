@@ -5,7 +5,7 @@ use std::time::Duration;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use crate::domain::{ControlAction, InferenceConfig, SegmenterConfig};
-use crate::model::ModelPreset;
+use crate::model::{ArtifactKind, ModelArtifact, ModelPreset};
 use crate::session::StartOptions;
 use crate::{Error, Result};
 
@@ -65,7 +65,7 @@ pub struct DoctorArgs {
     #[arg(long)]
     pub model: Option<PathBuf>,
 
-    /// Built-in model preset resolved under `models/`.
+    /// Built-in model preset resolved under the models directory.
     #[arg(long, value_enum)]
     pub model_preset: Option<ModelPreset>,
 
@@ -138,9 +138,9 @@ pub struct ModelArgs {
     #[arg(long)]
     pub model: Option<PathBuf>,
 
-    /// Built-in model preset resolved under `models/`; ignored when `--model` is set.
-    /// Without either flag, the model is asked interactively on a terminal, otherwise
-    /// the `small` preset is used.
+    /// Built-in model preset resolved under the models directory; ignored when `--model` is set.
+    /// Without either flag, the model is asked interactively on a terminal; a
+    /// non-interactive run without a model fails.
     #[arg(long, value_enum)]
     pub model_preset: Option<ModelPreset>,
 
@@ -220,11 +220,13 @@ pub fn execute(command: Command) -> Result<()> {
             Ok(())
         }
         Command::Doctor(args) => {
-            let model = args.model.clone().unwrap_or_else(|| {
-                args.model_preset
-                    .unwrap_or(ModelPreset::Small)
-                    .default_path()
-            });
+            let model = args
+                .model
+                .clone()
+                .or_else(|| args.model_preset.map(ModelPreset::default_path));
+            let Some(model) = model else {
+                return Err(Error::ModelRequired);
+            };
             let report = if args.probe_audio {
                 crate::diagnostics::doctor_with_audio_probe(
                     &args.sessions.sessions_dir,
@@ -254,7 +256,7 @@ pub fn execute(command: Command) -> Result<()> {
                 return Ok(());
             };
             let language = args.model.language;
-            let prompt = resolve_initial_prompt(args.model.asr_prompt, &language);
+            let prompt = resolve_initial_prompt_for_model(&model, args.model.asr_prompt, &language);
             let root = crate::session::run(StartOptions {
                 sessions_dir: args.sessions.sessions_dir,
                 input_wav: None,
@@ -289,7 +291,7 @@ pub fn execute(command: Command) -> Result<()> {
                 return Ok(());
             };
             let language = args.model.language;
-            let prompt = resolve_initial_prompt(args.model.asr_prompt, &language);
+            let prompt = resolve_initial_prompt_for_model(&model, args.model.asr_prompt, &language);
             crate::transcribe::run(crate::transcribe::TranscribeOptions {
                 input,
                 model,
@@ -364,6 +366,20 @@ fn resolve_initial_prompt(override_prompt: Option<String>, language: &str) -> Op
     }
 }
 
+/// The built-in prompt is Whisper-only. A Parakeet bundle keeps only an explicit
+/// `--asr-prompt` (which the engine warns it ignores), so a normal Parakeet run
+/// does not receive a prompt it cannot use.
+fn resolve_initial_prompt_for_model(
+    model: &Path,
+    override_prompt: Option<String>,
+    language: &str,
+) -> Option<String> {
+    if ModelArtifact::detect(model).is_ok_and(|artifact| artifact.kind == ArtifactKind::Bundle) {
+        return override_prompt.filter(|prompt| !prompt.trim().is_empty());
+    }
+    resolve_initial_prompt(override_prompt, language)
+}
+
 fn segmenter_config(vad: &VadArgs) -> SegmenterConfig {
     SegmenterConfig {
         energy_threshold: vad.vad_threshold,
@@ -381,33 +397,24 @@ fn inference_config(inference: &InferenceArgs, prompt: Option<String>) -> Infere
     }
 }
 
-/// Resolve the model from explicit arguments only (no interactive prompt).
-/// `--model` wins over `--model-preset`; `None` means "ask or use the default".
-fn resolve_model_path(model: Option<PathBuf>, preset: Option<ModelPreset>) -> Option<PathBuf> {
-    model.or_else(|| preset.map(ModelPreset::default_path))
-}
-
 struct ModelOption {
     label: String,
     path: PathBuf,
-    available: bool,
+    size_bytes: u64,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum MenuChoice {
-    Default,
     Select(usize),
     Custom,
     Cancel,
+    Retry,
 }
 
-/// Parse a menu answer: empty is the default, a valid number selects an option,
-/// `p` asks for a custom path, `q` cancels. Anything else falls back to the default.
+/// Parse a menu answer: a valid number selects, `p` asks for a custom path,
+/// `q` cancels. Empty or invalid answers ask again instead of picking a default.
 fn parse_menu_selection(input: &str, option_count: usize) -> MenuChoice {
     let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return MenuChoice::Default;
-    }
     if trimmed.eq_ignore_ascii_case("p") {
         return MenuChoice::Custom;
     }
@@ -416,114 +423,133 @@ fn parse_menu_selection(input: &str, option_count: usize) -> MenuChoice {
     }
     match trimmed.parse::<usize>() {
         Ok(number) if (1..=option_count).contains(&number) => MenuChoice::Select(number - 1),
-        _ => MenuChoice::Default,
+        _ => MenuChoice::Retry,
     }
 }
 
-/// Presets first (always listed, marked available or not), then any other GGML
-/// files found in `models_dir`.
+/// Only artifacts present on disk are listed, smallest first. Presets are not
+/// advertised when their file or directory is missing.
 fn model_menu_options(models_dir: &Path) -> Vec<ModelOption> {
-    let mut options: Vec<ModelOption> = ModelPreset::ALL
-        .iter()
-        .map(|preset| {
-            let path = preset.default_path();
-            ModelOption {
-                label: preset.label().to_owned(),
-                available: path.is_file(),
-                path,
-            }
-        })
-        .collect();
-    let known: Vec<PathBuf> = options.iter().map(|option| option.path.clone()).collect();
     let Ok(entries) = std::fs::read_dir(models_dir) else {
-        return options;
+        return Vec::new();
     };
-    let mut extra: Vec<ModelOption> = entries
+    let mut options: Vec<ModelOption> = entries
         .flatten()
         .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(std::ffi::OsStr::to_str) == Some("bin"))
-        .filter(|path| !known.contains(path))
-        .map(|path| ModelOption {
-            label: path
+        .filter(|path| {
+            !path
                 .file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-                .unwrap_or_else(|| path.display().to_string()),
-            available: true,
-            path,
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with('.'))
+        })
+        .filter_map(|path| {
+            // An explicit `--model` may be any file, but the menu only offers
+            // Whisper `.bin` files and directory bundles.
+            if path.is_file() && path.extension().and_then(std::ffi::OsStr::to_str) != Some("bin") {
+                return None;
+            }
+            let artifact = ModelArtifact::detect(&path).ok()?;
+            // A bundle needs the ONNX Runtime engine. Without the feature the
+            // binary cannot run it, so the menu must not offer it.
+            if artifact.kind == ArtifactKind::Bundle && !cfg!(feature = "parakeet") {
+                return None;
+            }
+            let size_bytes = artifact.total_size().unwrap_or(0);
+            let label = ModelPreset::ALL
+                .iter()
+                .find(|preset| preset.default_path() == path)
+                .map_or_else(|| artifact.name(), |preset| preset.label().to_owned());
+            Some(ModelOption {
+                label,
+                path,
+                size_bytes,
+            })
         })
         .collect();
-    extra.sort_by(|left, right| left.label.cmp(&right.label));
-    options.extend(extra);
+    options.sort_by(|left, right| {
+        left.size_bytes
+            .cmp(&right.size_bytes)
+            .then_with(|| left.label.cmp(&right.label))
+    });
     options
+}
+
+fn human_size(bytes: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    const GIB: u64 = 1024 * MIB;
+    if bytes >= GIB {
+        format!("{:.1} GiB", bytes as f64 / GIB as f64)
+    } else {
+        format!("{} MiB", bytes / MIB)
+    }
 }
 
 fn print_model_menu(options: &[ModelOption]) {
     println!("Seleziona il modello per la trascrizione:");
     for (index, option) in options.iter().enumerate() {
-        let status = if option.available {
-            "scaricato"
-        } else {
-            "mancante"
-        };
         println!(
-            "  {}) {:<16} [{}] {}",
+            "  {}) {:<24} {:>7}  {}",
             index + 1,
             option.label,
-            status,
+            human_size(option.size_bytes),
             option.path.display()
         );
     }
-    print!("Invio = default (small), numero = scegli, p = percorso personalizzato, q = annulla: ");
+    print!("numero = scegli, p = percorso personalizzato, q = annulla: ");
     let _ = std::io::stdout().flush();
 }
 
-/// Outcome of the interactive picker: a model to use, or the user cancelled.
-enum ModelPick {
-    Use(PathBuf),
-    Cancelled,
-}
-
-fn small_model() -> ModelPick {
-    ModelPick::Use(ModelPreset::Small.default_path())
-}
-
-/// Interactive model picker. Shown only on an interactive terminal and only when
-/// no model flag was given. Returns the `small` preset on an empty answer.
-fn select_model_interactively() -> ModelPick {
+/// Interactive model picker. `Ok(None)` means the user cancelled.
+fn select_model_interactively() -> Result<Option<PathBuf>> {
     if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
-        return small_model();
+        return Err(Error::ModelRequired);
     }
-    let options = model_menu_options(Path::new(crate::model::MODELS_DIR));
-    print_model_menu(&options);
-    let mut input = String::new();
-    if std::io::stdin().read_line(&mut input).is_err() {
-        return small_model();
+    let models_dir = crate::model::models_dir();
+    let options = model_menu_options(&models_dir);
+    if options.is_empty() {
+        return Err(Error::NoModelsAvailable(models_dir));
     }
-    match parse_menu_selection(&input, options.len()) {
-        MenuChoice::Default => small_model(),
-        MenuChoice::Select(index) => ModelPick::Use(
-            options
-                .get(index)
-                .map(|option| option.path.clone())
-                .unwrap_or_else(|| ModelPreset::Small.default_path()),
-        ),
-        MenuChoice::Custom => {
-            print!("Percorso del modello (.bin): ");
-            let _ = std::io::stdout().flush();
-            let mut path = String::new();
-            if std::io::stdin().read_line(&mut path).is_err() {
-                return small_model();
-            }
-            let path = path.trim();
-            if path.is_empty() {
-                small_model()
-            } else {
-                ModelPick::Use(PathBuf::from(path))
-            }
+    if options.len() == 1 {
+        let option = &options[0];
+        println!(
+            "Modello selezionato: {} ({})",
+            option.label,
+            option.path.display()
+        );
+        return Ok(Some(option.path.clone()));
+    }
+    loop {
+        print_model_menu(&options);
+        let mut input = String::new();
+        if std::io::stdin().read_line(&mut input).is_err() {
+            return Err(Error::ModelRequired);
         }
-        MenuChoice::Cancel => {
-            println!("selezione annullata");
-            ModelPick::Cancelled
+        match parse_menu_selection(&input, options.len()) {
+            MenuChoice::Select(index) => return Ok(Some(options[index].path.clone())),
+            MenuChoice::Custom => {
+                print!("Percorso del modello (file .bin o directory ONNX): ");
+                let _ = std::io::stdout().flush();
+                let mut path = String::new();
+                if std::io::stdin().read_line(&mut path).is_err() {
+                    return Err(Error::ModelRequired);
+                }
+                let path = path.trim();
+                if path.is_empty() {
+                    continue;
+                }
+                let path = PathBuf::from(path);
+                match ModelArtifact::detect(&path) {
+                    Ok(_) => return Ok(Some(path)),
+                    Err(error) => println!("{error}"),
+                }
+            }
+            MenuChoice::Cancel => {
+                println!("selezione annullata");
+                return Ok(None);
+            }
+            MenuChoice::Retry => {
+                println!("inserisci un numero tra 1 e {}", options.len());
+            }
         }
     }
 }
@@ -638,16 +664,23 @@ fn select_input_path_interactively() -> Result<InputPick> {
     }
 }
 
-/// Resolve the ASR model: the `--model` flag or preset, otherwise the interactive
-/// picker. `Ok(None)` means the user cancelled the picker; the command exits cleanly.
+/// Resolve the ASR model: the `--model` flag, a preset that is present on disk,
+/// otherwise the interactive picker. `Ok(None)` means the user cancelled.
 fn resolve_model(model: Option<PathBuf>, preset: Option<ModelPreset>) -> Result<Option<PathBuf>> {
-    if let Some(path) = resolve_model_path(model, preset) {
+    if let Some(path) = model {
         return Ok(Some(path));
     }
-    Ok(match select_model_interactively() {
-        ModelPick::Use(path) => Some(path),
-        ModelPick::Cancelled => None,
-    })
+    if let Some(preset) = preset {
+        let path = preset.default_path();
+        if !path.exists() {
+            return Err(Error::ModelNotDownloaded {
+                name: preset.label().to_owned(),
+                path,
+            });
+        }
+        return Ok(Some(path));
+    }
+    select_model_interactively()
 }
 
 fn print_json(value: &impl serde::Serialize) -> Result<()> {
@@ -680,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn start_defaults_to_the_small_model_preset() {
+    fn start_has_no_default_model() {
         let cli = Cli::try_parse_from(["scrib", "start"]).expect("start command should parse");
 
         let Command::Start(args) = cli.command else {
@@ -689,26 +722,21 @@ mod tests {
 
         assert_eq!(args.model.model, None);
         assert_eq!(args.model.model_preset, None);
-        assert_eq!(
-            resolve_model_path(args.model.model, args.model.model_preset)
-                .unwrap_or_else(|| ModelPreset::Small.default_path()),
-            PathBuf::from("models/ggml-small-q5_1.bin")
-        );
     }
 
     #[test]
     fn start_accepts_a_model_preset() {
-        let cli = Cli::try_parse_from(["scrib", "start", "--model-preset", "large-v3-turbo"])
+        let cli = Cli::try_parse_from(["scrib", "start", "--model-preset", "parakeet-v3"])
             .expect("start command should parse");
 
         let Command::Start(args) = cli.command else {
             panic!("expected start command");
         };
 
-        assert_eq!(args.model.model_preset, Some(ModelPreset::LargeV3Turbo));
+        assert_eq!(args.model.model_preset, Some(ModelPreset::ParakeetV3));
         assert_eq!(
             args.model.model_preset.unwrap().default_path(),
-            PathBuf::from("models/ggml-large-v3-turbo-q8_0.bin")
+            crate::model::models_dir().join("parakeet-tdt-0.6b-v3-onnx")
         );
     }
 
@@ -729,49 +757,59 @@ mod tests {
         };
 
         assert_eq!(
-            resolve_model_path(args.model.model, args.model.model_preset),
+            resolve_model(args.model.model, args.model.model_preset).expect("explicit path"),
             Some(PathBuf::from("models/custom.bin"))
         );
     }
 
     #[test]
-    fn model_resolution_uses_the_preset_or_nothing() {
-        assert_eq!(
-            resolve_model_path(None, Some(ModelPreset::LargeV3Turbo)),
-            Some(PathBuf::from("models/ggml-large-v3-turbo-q8_0.bin"))
-        );
-        assert_eq!(resolve_model_path(None, None), None);
-    }
-
-    #[test]
-    fn menu_selection_parsing() {
-        assert_eq!(parse_menu_selection("", 4), MenuChoice::Default);
+    fn menu_selection_parsing_never_falls_back_to_a_default() {
+        assert_eq!(parse_menu_selection("", 4), MenuChoice::Retry);
         assert_eq!(parse_menu_selection("  2 ", 4), MenuChoice::Select(1));
-        assert_eq!(parse_menu_selection("5", 4), MenuChoice::Default);
-        assert_eq!(parse_menu_selection("0", 4), MenuChoice::Default);
+        assert_eq!(parse_menu_selection("5", 4), MenuChoice::Retry);
+        assert_eq!(parse_menu_selection("0", 4), MenuChoice::Retry);
         assert_eq!(parse_menu_selection("p", 4), MenuChoice::Custom);
-        assert_eq!(parse_menu_selection("abc", 4), MenuChoice::Default);
+        assert_eq!(parse_menu_selection("abc", 4), MenuChoice::Retry);
         assert_eq!(parse_menu_selection("q", 4), MenuChoice::Cancel);
         assert_eq!(parse_menu_selection(" Q ", 4), MenuChoice::Cancel);
     }
 
     #[test]
-    fn menu_lists_presets_then_extra_ggml_files() {
+    fn menu_lists_only_available_artifacts_sorted_by_size() {
         let temporary = tempfile::tempdir().expect("temp directory should be created");
         std::fs::write(temporary.path().join("custom.bin"), b"x")
             .expect("fixture should be written");
         std::fs::write(temporary.path().join("notes.txt"), b"x")
             .expect("fixture should be written");
+        let bundle = temporary.path().join("bundle");
+        std::fs::create_dir(&bundle).expect("bundle directory should be created");
+        for name in [
+            crate::model::PARAKEET_CONFIG,
+            crate::model::PARAKEET_VOCAB,
+            "nemo128.onnx",
+            crate::model::PARAKEET_ENCODER,
+            crate::model::PARAKEET_DECODER_JOINT,
+        ] {
+            std::fs::write(bundle.join(name), b"x").expect("fixture should be written");
+        }
 
         let options = model_menu_options(temporary.path());
 
-        assert_eq!(options.len(), ModelPreset::ALL.len() + 1);
-        assert!(
-            options
-                .iter()
-                .any(|option| option.label == "custom.bin" && option.available)
-        );
         assert!(!options.iter().any(|option| option.label == "notes.txt"));
+        #[cfg(feature = "parakeet")]
+        {
+            assert_eq!(options.len(), 2);
+            assert_eq!(options[0].label, "custom.bin");
+            assert_eq!(options[0].size_bytes, 1);
+            assert_eq!(options[1].label, "bundle");
+            assert_eq!(options[1].size_bytes, 5);
+        }
+        #[cfg(not(feature = "parakeet"))]
+        {
+            // Without the feature the binary cannot run a bundle, so it is hidden.
+            assert_eq!(options.len(), 1);
+            assert_eq!(options[0].label, "custom.bin");
+        }
     }
 
     #[test]

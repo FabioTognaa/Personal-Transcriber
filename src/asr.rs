@@ -1,6 +1,6 @@
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Instant, UNIX_EPOCH};
@@ -14,6 +14,7 @@ use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextPar
 use crate::domain::{
     InferenceConfig, InferenceStrategy, ModelIdentity, SpeechSegment, TranscriptSegment,
 };
+use crate::model::{ArtifactKind, ModelArtifact};
 use crate::schema::SCHEMA_VERSION;
 use crate::session::{SegmentSink, SegmentSinkStatus};
 use crate::storage::{TranscriptWriter, atomic_write_json, read_json};
@@ -32,6 +33,46 @@ pub trait AsrEngine: Send + 'static {
         language: &str,
         config: &InferenceConfig,
     ) -> Result<AsrOutput>;
+}
+
+impl AsrEngine for Box<dyn AsrEngine> {
+    fn transcribe(
+        &mut self,
+        segment: &SpeechSegment,
+        language: &str,
+        config: &InferenceConfig,
+    ) -> Result<AsrOutput> {
+        (**self).transcribe(segment, language, config)
+    }
+}
+
+/// Build the engine that runs `artifact`. One engine per process: the caller
+/// drops the previous one before loading another.
+pub fn load_engine(
+    artifact: &ModelArtifact,
+    config: &InferenceConfig,
+) -> Result<Box<dyn AsrEngine>> {
+    match artifact.kind {
+        ArtifactKind::SingleFile => Ok(Box::new(WhisperEngine::load(&artifact.path, config)?)),
+        ArtifactKind::Bundle => load_parakeet(artifact, config),
+    }
+}
+
+#[cfg(feature = "parakeet")]
+fn load_parakeet(artifact: &ModelArtifact, config: &InferenceConfig) -> Result<Box<dyn AsrEngine>> {
+    Ok(Box::new(crate::parakeet::ParakeetEngine::load(
+        artifact, config,
+    )?))
+}
+
+#[cfg(not(feature = "parakeet"))]
+fn load_parakeet(
+    _artifact: &ModelArtifact,
+    _config: &InferenceConfig,
+) -> Result<Box<dyn AsrEngine>> {
+    Err(Error::Asr(
+        "Parakeet support is not compiled in; rebuild with --features parakeet".to_owned(),
+    ))
 }
 
 const ASR_QUEUE_CAPACITY: usize = 8;
@@ -121,18 +162,21 @@ impl<E: AsrEngine> SegmentSink for TranscribingSink<E> {
                         continue;
                     }
                     let output = engine.transcribe(&segment, &language, &inference)?;
-                    writer.append(&TranscriptSegment {
-                        schema_version: SCHEMA_VERSION,
-                        segment_id: Uuid::new_v4(),
-                        session_id,
-                        start: segment.start,
-                        end: segment.end,
-                        text: output.text,
-                        language: language.clone(),
-                        model: model.name.clone(),
-                        model_sha256: model.sha256.clone(),
-                        inference: inference.clone(),
-                    })?;
+                    if !output.text.trim().is_empty() {
+                        writer.append(&TranscriptSegment {
+                            schema_version: SCHEMA_VERSION,
+                            segment_id: Uuid::new_v4(),
+                            session_id,
+                            start: segment.start,
+                            end: segment.end,
+                            text: output.text,
+                            language: language.clone(),
+                            model: model.name.clone(),
+                            model_sha256: model.sha256.clone(),
+                            engine: model.engine,
+                            inference: inference.clone(),
+                        })?;
+                    }
                     let mut current = status
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -352,28 +396,128 @@ fn cached_sha256(path: &Path, metadata: &std::fs::Metadata) -> Result<String> {
     Ok(sha256)
 }
 
-pub fn model_identity(path: &Path) -> Result<ModelIdentity> {
-    let metadata = std::fs::metadata(path)?;
-    if !metadata.is_file() || metadata.len() == 0 {
-        return Err(Error::Asr(format!(
-            "model is not a non-empty file: {}",
-            path.display()
-        )));
-    }
-
-    let sha256 = cached_sha256(path, &metadata)?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::Asr("model filename is not valid UTF-8".to_owned()))?
-        .to_owned();
+/// SHA-256 identity of an artifact: the file hash for Whisper, the canonical
+/// hash of the files that make up the bundle for Parakeet.
+pub fn model_identity(artifact: &ModelArtifact) -> Result<ModelIdentity> {
+    let (sha256, size_bytes) = match artifact.kind {
+        ArtifactKind::SingleFile => {
+            let metadata = std::fs::metadata(&artifact.path)?;
+            if !metadata.is_file() || metadata.len() == 0 {
+                return Err(Error::Asr(format!(
+                    "model is not a non-empty file: {}",
+                    artifact.path.display()
+                )));
+            }
+            let sha256 = cached_sha256(&artifact.path, &metadata)?;
+            (sha256, metadata.len())
+        }
+        ArtifactKind::Bundle => bundle_identity(artifact)?,
+    };
 
     Ok(ModelIdentity {
-        path: path.to_path_buf(),
-        name,
+        path: artifact.path.clone(),
+        name: artifact.name(),
         sha256,
-        size_bytes: metadata.len(),
+        size_bytes,
+        engine: artifact.kind.engine(),
     })
+}
+
+#[derive(Serialize, Deserialize)]
+struct CachedBundleIdentity {
+    fingerprint: String,
+    size_bytes: u64,
+    sha256: String,
+}
+
+/// Canonical SHA-256 of a bundle: the hash of the sorted `sha256  name` lines of
+/// every file that makes up the artifact.
+fn bundle_identity(artifact: &ModelArtifact) -> Result<(String, u64)> {
+    let files = artifact.files()?;
+    let fingerprint = bundle_fingerprint(&files)?;
+    let cache_path = bundle_sidecar(&artifact.path);
+    if let Ok(cached) = read_json::<CachedBundleIdentity>(&cache_path)
+        && cached.fingerprint == fingerprint
+    {
+        return Ok((cached.sha256, cached.size_bytes));
+    }
+
+    let mut size_bytes = 0_u64;
+    let mut per_file = Vec::with_capacity(files.len());
+    for path in &files {
+        let metadata = std::fs::metadata(path)?;
+        size_bytes = size_bytes.saturating_add(metadata.len());
+        // No per-file sidecar: the bundle-level cache below already avoids
+        // re-hashing, and writing inside the model directory would pollute it.
+        let sha256 = sha256_file(path)?;
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| Error::Asr("model filename is not valid UTF-8".to_owned()))?;
+        per_file.push((name.to_owned(), sha256));
+    }
+    let sha256 = bundle_sha256(&per_file);
+    let _ = atomic_write_json(
+        &cache_path,
+        &CachedBundleIdentity {
+            fingerprint,
+            size_bytes,
+            sha256: sha256.clone(),
+        },
+    );
+    Ok((sha256, size_bytes))
+}
+
+/// Fingerprint of the files that make up a bundle, used to reuse the canonical
+/// hash when nothing changed.
+fn bundle_fingerprint(files: &[PathBuf]) -> Result<String> {
+    let mut parts = Vec::with_capacity(files.len());
+    for path in files {
+        let metadata = std::fs::metadata(path)?;
+        let modified_nanos = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .and_then(|duration| u64::try_from(duration.as_nanos()).ok())
+            .unwrap_or(0);
+        let name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| Error::Asr("model filename is not valid UTF-8".to_owned()))?;
+        parts.push(format!("{name}:{}:{modified_nanos}", metadata.len()));
+    }
+    Ok(parts.join("\n"))
+}
+
+/// Canonical SHA-256 of a bundle from its `(file name, sha256)` pairs.
+///
+/// The formula is the hash of the sorted `sha256  name` lines. It is exposed so
+/// `doctor` can compute the same aggregate from the per-file hashes it already
+/// verifies, without reading the bundle twice.
+#[must_use]
+pub fn bundle_sha256(files: &[(String, String)]) -> String {
+    let mut sorted = files.iter().collect::<Vec<_>>();
+    sorted.sort_by(|left, right| left.0.cmp(&right.0));
+    let mut canonical = String::new();
+    for (name, sha256) in sorted {
+        canonical.push_str(&format!("{sha256}  {name}\n"));
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Sidecar next to the bundle directory, e.g. `models/parakeet-....sha256`.
+/// `Path::with_extension` cannot be used because bundle names contain dots.
+fn bundle_sidecar(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    path.parent().map_or_else(
+        || PathBuf::from(format!("{name}.sha256")),
+        |parent| parent.join(format!("{name}.sha256")),
+    )
 }
 
 pub fn validate_inference_config(config: &InferenceConfig) -> Result<()> {
@@ -405,6 +549,8 @@ pub fn validate_inference_config(config: &InferenceConfig) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::TimestampUs;
+    use crate::session::SegmentSink;
 
     #[test]
     fn model_identity_reuses_the_sidecar_cache() {
@@ -412,7 +558,8 @@ mod tests {
         let model = temporary.path().join("model.bin");
         std::fs::write(&model, b"some model bytes").expect("model fixture should be written");
 
-        let first = model_identity(&model).expect("identity should be computed");
+        let first = model_identity(&ModelArtifact::detect(&model).expect("artifact"))
+            .expect("identity should be computed");
         let cache_path = model.with_extension("sha256");
         let mut cached: serde_json::Value = serde_json::from_slice(
             &std::fs::read(&cache_path).expect("cache sidecar should exist"),
@@ -425,9 +572,114 @@ mod tests {
         )
         .expect("cache should be rewritten");
 
-        let second = model_identity(&model).expect("identity should come from the cache");
+        let second = model_identity(&ModelArtifact::detect(&model).expect("artifact"))
+            .expect("identity should come from the cache");
 
         assert_eq!(first.sha256.len(), 64);
         assert_eq!(second.sha256, "cached-value");
+    }
+
+    #[test]
+    fn bundle_identity_is_stable_and_keeps_its_sidecar_outside_the_bundle() {
+        let temporary = tempfile::tempdir().expect("temporary directory should be created");
+        let bundle = temporary.path().join("bundle");
+        std::fs::create_dir(&bundle).expect("bundle directory");
+        for name in [
+            crate::model::PARAKEET_CONFIG,
+            crate::model::PARAKEET_VOCAB,
+            "nemo128.onnx",
+            crate::model::PARAKEET_ENCODER,
+            crate::model::PARAKEET_DECODER_JOINT,
+        ] {
+            std::fs::write(bundle.join(name), b"x").expect("fixture");
+        }
+        let artifact = ModelArtifact::detect(&bundle).expect("bundle artifact");
+
+        let first = model_identity(&artifact).expect("identity");
+        let second = model_identity(&artifact).expect("cached identity");
+
+        assert_eq!(first.sha256.len(), 64);
+        assert_eq!(first.sha256, second.sha256);
+        assert_eq!(first.size_bytes, 5);
+        assert_eq!(first.engine, crate::domain::EngineKind::Parakeet);
+        assert!(bundle_sidecar(&bundle).is_file());
+        assert!(!bundle.join("config.json.sha256").exists());
+    }
+
+    #[test]
+    fn canonical_bundle_hash_matches_the_identity() {
+        let temporary = tempfile::tempdir().expect("temporary directory should be created");
+        let bundle = temporary.path().join("bundle");
+        std::fs::create_dir(&bundle).expect("bundle directory");
+        for name in [
+            crate::model::PARAKEET_CONFIG,
+            crate::model::PARAKEET_VOCAB,
+            "nemo128.onnx",
+            crate::model::PARAKEET_ENCODER,
+            crate::model::PARAKEET_DECODER_JOINT,
+        ] {
+            std::fs::write(bundle.join(name), b"x").expect("fixture");
+        }
+        let artifact = ModelArtifact::detect(&bundle).expect("bundle artifact");
+        let identity = model_identity(&artifact).expect("identity");
+
+        let mut per_file = Vec::new();
+        for path in artifact.files().expect("files") {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("file name")
+                .to_owned();
+            per_file.push((name, sha256_file(&path).expect("file hash")));
+        }
+
+        assert_eq!(identity.sha256, bundle_sha256(&per_file));
+    }
+
+    #[test]
+    fn transcribing_sink_skips_empty_text() {
+        struct SilentAsr;
+
+        impl AsrEngine for SilentAsr {
+            fn transcribe(
+                &mut self,
+                _segment: &SpeechSegment,
+                _language: &str,
+                _config: &InferenceConfig,
+            ) -> Result<AsrOutput> {
+                Ok(AsrOutput {
+                    text: "   ".to_owned(),
+                    inference_duration_us: 1,
+                })
+            }
+        }
+
+        let temporary = tempfile::tempdir().expect("temporary directory should be created");
+        let path = temporary.path().join("transcript.jsonl");
+        let identity = ModelIdentity {
+            path: PathBuf::from("model.bin"),
+            name: "model.bin".to_owned(),
+            sha256: "sha".to_owned(),
+            size_bytes: 1,
+            engine: crate::domain::EngineKind::Whisper,
+        };
+        let mut sink = TranscribingSink::new(
+            SilentAsr,
+            identity,
+            "it".to_owned(),
+            InferenceConfig::default(),
+        );
+
+        sink.start(Uuid::nil(), &path).expect("start");
+        sink.accept(&SpeechSegment {
+            start: TimestampUs(0),
+            end: TimestampUs(1_000_000),
+            samples: vec![0.0; 16_000],
+        })
+        .expect("accept");
+        sink.finish().expect("finish");
+
+        let contents = std::fs::read_to_string(&path).expect("transcript should exist");
+        assert!(contents.trim().is_empty());
     }
 }

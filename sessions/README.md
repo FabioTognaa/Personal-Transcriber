@@ -35,7 +35,10 @@ In ogni cartella si possono trovare:
   file di metadati relativo alla registrazione (chunking, lavoro del modello asr...) che si aggiorna a runtime
 
 - ### transcript.jsonl:
-  file nel quale vengono salvati i segmenti di testo ricostruiti da Whisper
+  file nel quale vengono salvati i segmenti di testo ricostruiti dal motore ASR
+  scelto (Whisper o Parakeet). Ogni riga registra anche il motore nel campo
+  `engine` (`whisper` o `parakeet`), oltre a modello, SHA-256 e parametri di
+  inferenza.
 
 
 - ### .control.lock .runner.lock:

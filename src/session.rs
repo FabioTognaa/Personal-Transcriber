@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{RecvTimeoutError, SendTimeoutError, TrySendError, bounded};
 use uuid::Uuid;
 
-use crate::asr::{TranscribingSink, WhisperEngine, model_identity, validate_inference_config};
+use crate::asr::{TranscribingSink, load_engine, model_identity, validate_inference_config};
 use crate::audio::{FileAudioSource, StreamingAudioSource};
 use crate::domain::{
     AsrMetrics, ControlAction, ControlRequest, InferenceConfig, ModelIdentity, PcmChunk,
@@ -16,6 +16,7 @@ use crate::domain::{
     SessionState, SessionStatus, SpeechSegment, TimestampUs,
 };
 use crate::live_audio::{LiveAudioChunk, LiveAudioConfig};
+use crate::model::ModelArtifact;
 use crate::schema::{CURRENT_SESSION_FILE, SCHEMA_VERSION};
 use crate::segment::{Segmenter, rms};
 use crate::storage::{
@@ -241,16 +242,13 @@ impl SegmentSink for NullSegmentSink {
 
 /// Model identity for `start`, degraded to a hash-less identity when hashing fails
 /// so a transient I/O error cannot abort a recording.
-fn best_effort_identity(path: &Path) -> ModelIdentity {
-    model_identity(path).unwrap_or_else(|_| ModelIdentity {
-        path: path.to_path_buf(),
-        name: path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_owned(),
+fn best_effort_identity(artifact: &ModelArtifact) -> ModelIdentity {
+    model_identity(artifact).unwrap_or_else(|_| ModelIdentity {
+        path: artifact.path.clone(),
+        name: artifact.name(),
         sha256: String::new(),
         size_bytes: 0,
+        engine: artifact.kind.engine(),
     })
 }
 
@@ -259,11 +257,11 @@ pub fn run(options: StartOptions) -> Result<PathBuf> {
     validate_language(&options.language)?;
     validate_inference_config(&options.inference)?;
     let model_path = options.model.as_deref().ok_or(Error::ModelRequired)?;
-    crate::validation::validate_existing_file(model_path, "model")?;
+    let artifact = ModelArtifact::detect(model_path)?;
     // Best effort: an I/O hiccup while hashing (or a non-UTF-8 filename) must not
     // block a recording session. The identity is recorded as-is; `doctor` stays strict.
-    let identity = best_effort_identity(model_path);
-    let engine = WhisperEngine::load(model_path, &options.inference)?;
+    let identity = best_effort_identity(&artifact);
+    let engine = load_engine(&artifact, &options.inference)?;
     let mut sink = TranscribingSink::new(
         engine,
         identity.clone(),
@@ -1151,7 +1149,6 @@ mod tests {
     use crate::domain::{
         AudioSourceKind, PcmChunk, TARGET_CHANNELS, TARGET_SAMPLE_RATE_HZ, TimestampUs,
     };
-    use std::path::Path;
     use std::time::Duration;
 
     #[test]
@@ -1162,7 +1159,11 @@ mod tests {
 
     #[test]
     fn missing_model_still_yields_a_hashless_identity() {
-        let identity = best_effort_identity(Path::new("/nonexistent/model.bin"));
+        let artifact = crate::model::ModelArtifact {
+            kind: crate::model::ArtifactKind::SingleFile,
+            path: std::path::PathBuf::from("/nonexistent/model.bin"),
+        };
+        let identity = best_effort_identity(&artifact);
 
         assert_eq!(identity.name, "model.bin");
         assert_eq!(identity.sha256, "");

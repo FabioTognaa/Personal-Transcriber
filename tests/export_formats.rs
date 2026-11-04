@@ -2,7 +2,8 @@ use std::fs;
 use std::path::Path;
 
 use personal_transcriber::domain::{
-    InferenceConfig, SessionConfig, SessionMetadata, SessionState, TimestampUs, TranscriptSegment,
+    EngineKind, InferenceConfig, SessionConfig, SessionMetadata, SessionState, TimestampUs,
+    TranscriptSegment,
 };
 use personal_transcriber::export::{self, Format};
 use personal_transcriber::schema::{SCHEMA_VERSION, SESSION_METADATA_FILE, TRANSCRIPT_FILE};
@@ -103,6 +104,7 @@ fn write_session(session: &Path) {
         language: "it".to_owned(),
         model: "fixture.bin".to_owned(),
         model_sha256: "fixture-sha256".to_owned(),
+        engine: EngineKind::Whisper,
         inference: InferenceConfig::default(),
     };
     fs::write(

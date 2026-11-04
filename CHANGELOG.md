@@ -9,6 +9,14 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
 ### Added
 
+- Parakeet TDT 0.6B v3 come secondo motore ASR, incluso nella build standard:
+  bundle ONNX int8 eseguito su ONNX Runtime (CPU), selezionabile dallo stesso
+  menu di Whisper. I segmenti sono spezzati a 15 s per contenere la memoria.
+- Variabile `SCRIB_MODELS_DIR` per scegliere la cartella dei modelli (default
+  `models/`).
+- Ogni riga di transcript registra il motore che l'ha prodotta (`engine`).
+- Benchmark consapevole del motore, con fixture di 60 s di silenzio per misurare
+  le allucinazioni.
 - Comando `transcribe <file>` per trascrivere un file esistente senza creare una
   sessione: produce solo `<nome>.txt`, in una cartella nuova sotto `--sessions-dir`
   (stesso nome `YY-MM-DD` di `start`), e non conserva audio né eventi.
@@ -21,6 +29,17 @@ progetto aderisce a [Semantic Versioning](https://semver.org/lang/it/).
 
 ### Changed
 
+- Non esiste più un modello predefinito: `start`, `transcribe` e `doctor`
+  richiedono `--model`/`--model-preset` oppure mostrano un menu con i soli
+  modelli già scaricati, ordinati per dimensione. Senza terminale e senza modello
+  il comando fallisce con un errore esplicito.
+- `--model` accetta anche una directory bundle Parakeet; `doctor` verifica tutti
+  i file del bundle e nomina quello mancante o corrotto.
+- I segmenti con testo vuoto non vengono più scritti in `transcript.jsonl`;
+  avanzamento e metriche continuano comunque ad aggiornarsi.
+- Con una build senza Parakeet (`--no-default-features --features metal`) il menu
+  non mostra i bundle Parakeet, che quel binario non saprebbe eseguire.
+- `doctor` verifica i bundle con una sola lettura dei file.
 - Le cartelle di sessione sono nominate con il giorno di avvio (`YY-MM-DD`) e non
   più con data e ora; più sessioni nello stesso giorno usano i suffissi `_2`, `_3`….
 - Ridotte le opzioni di tuning: `start` e `transcribe` espongono solo soglia,

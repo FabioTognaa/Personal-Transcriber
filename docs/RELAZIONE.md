@@ -5,8 +5,9 @@ con quali pezzi è costruito, e cosa fa davvero dal momento in cui si lancia un
 comando fino ai file lasciati sul disco.
 
 È una descrizione del comportamento attuale, non una roadmap e non un manuale di
-installazione. Per l'uso quotidiano resta il [README](../README.md). Per le decisioni
-di prodotto resta [PROJECT_CONTEXT.md](../PROJECT_CONTEXT.md).
+installazione. Per l'uso quotidiano resta il [README](../README.md). Per le
+decisioni di prodotto e architetturali restano il [piano
+Parakeet](PARAKEET_PLAN.md) e gli [ADR](adr/).
 
 ## Cosa fa
 
@@ -37,7 +38,14 @@ Il trascrittore può essere usato anche per file audio/video già pronti, in que
   con un inizio e una fine. Vengono considerati segmento di voce un insieme di chunk.
 - **ASR.**
   Automatic Speech Recognition: il motore che trasforma i campioni in testo.
-  In questo caso viene usato Whisper, un LLM adibito proprio a fare speech recognition e a tradurre lo spettrogramma del parlato.
+  Scribroom ne usa due: Whisper (whisper.cpp) e Parakeet (ONNX Runtime).
+- **Motore.**
+  Il runtime che esegue un modello: whisper.cpp oppure ONNX Runtime.
+- **Modello.**
+  Un insieme di pesi con un nome, per esempio `large-v3-turbo` o `parakeet-v3`.
+- **Artefatto.**
+  La forma del modello su disco: un file singolo (Whisper) o una directory
+  (Parakeet).
 - **JSONL.**
   Formato JSON dei file di log e di trascrizione. Viene salvato per affiancare ai segmenti di prlato prodotti dei metadati.
 
@@ -56,6 +64,9 @@ Il trascrittore può essere usato anche per file audio/video già pronti, in que
   Serve per leggere e scrivere file WAV (PCM), in streaming, senza decodifica di altri formati.
 - **`whisper-rs`**
   È il motore che serve per far girare i modelli AI Whisper, una volta che le rispettive matrici dei pesi vengono caricate in memoria. permette la trascrizione vera e propria del parlato
+- **`ort`**
+  Binding Rust a ONNX Runtime, usato dal motore Parakeet quando il programma è
+  compilato con la feature `parakeet`.
 
 ### File in Input
 
@@ -206,6 +217,16 @@ la frase, più l'inferenza", non un flusso di parole aggiornato ogni decimo di
 secondo. L'obiettivo di progetto è un segmento finale nell'ordine dei 3–15 secondi,
 non un sottotitolo istantaneo.
 
+## Motori e modelli
+
+L'utente sceglie il **modello**, non il motore. La forma dell'artefatto decide il
+motore: un file `.bin` è Whisper, una directory con `config.json`, `vocab.txt` e i
+file `.onnx` è Parakeet. Il caricamento passa da una factory unica
+(`asr::load_engine`), così `start`, `transcribe` e il benchmark condividono lo
+stesso percorso. Non esiste un modello predefinito: il modello arriva da
+`--model`, da `--model-preset` o dal menu interattivo, che elenca solo gli
+artefatti presenti.
+
 ## Whisper
 
 Il progetto si appoggia a `whisper-rs` per usare whisper.cpp in locale. Fa girare uno dei modelli che si trovano in `models/`, caricati in memoria una volta sola quando il programma viene inizializzato. Il suo compito è tradurre in testo i campioni che il VAD gli passa come PCM float mono a 16 kHz.
@@ -221,6 +242,27 @@ Il progetto si appoggia a `whisper-rs` per usare whisper.cpp in locale. Fa girar
    - **segmenti e timestamp**: Whisper produce micro-segmenti con i propri timestamp.
 6. I timestamp interni di Whisper vengono ignorati. Il programma concatena il testo di tutti i micro-segmenti in un'unica stringa e associa a quella stringa l'intervallo deciso dal VAD, non quello di Whisper. La granularità temporale del transcript è quindi quella dei segmenti, non delle singole parole.
 
+## Parakeet
+
+Parakeet TDT 0.6B v3 è il secondo motore, incluso nella build standard
+(`--no-default-features --features metal` resta l'uscita di sicurezza per
+compilare senza ONNX Runtime). È una directory di file ONNX int8 (circa 670 MB):
+
+- `nemo128.onnx`: preprocessore mel a 128 bande;
+- `encoder-model.int8.onnx`: FastConformer, produce 1024 numeri per passo e
+  comprime il tempo di 8;
+- `decoder_joint-model.int8.onnx`: a ogni passo sceglie il token e di quanti passi
+  avanzare (TDT);
+- `vocab.txt`: 8193 token; `<blk>` è il vuoto;
+- `config.json`: tipo di modello e dimensioni.
+
+Il motore gira su CPU, senza arena allocator, e spezza i segmenti a 15 s. La CPU è
+stata scelta dopo la misura: su macOS ONNX Runtime registra CoreML da solo, ma il
+grafo viene spezzato e su questa macchina la CPU è risultata più veloce e più
+precisa. I pesi restano in RAM in ogni caso: su Apple Silicon CPU e GPU condividono
+la stessa memoria. Il prompt di Whisper non viene passato; Parakeet non ha
+glossario e rileva la lingua da solo.
+
 ## Da segmento a testo
 
 Il worker ASR ha una coda da 8 segmenti. Qui l'invio è bloccante: se Whisper è
@@ -228,16 +270,18 @@ indietro, il segmentatore aspetta un posto in coda. Quell'attesa può riempire l
 coda di segmentazione e far scattare il replay descritto sopra. L'acquisizione, nel
 frattempo, continua.
 
-Per ogni segmento nuovo Whisper gira con traduzione disattivata, lingua `it` o `en`
-scelta all'avvio, temperatura 0, beam search di ampiezza 5 e al massimo 8 thread.
-Flash attention è accesa. Se è impostato un prompt iniziale, viene anteposto al
-decoder: orienta punteggiatura, maiuscole e vocabolario, ma il testo resta l'uscita
-del motore ASR, senza correzioni successive. Il testo dei pezzi interni di Whisper
-viene concatenato così com'è, senza ripulitura.
+Per ogni segmento nuovo il motore scelto gira con traduzione disattivata, lingua
+`it` o `en` scelta all'avvio, temperatura 0, beam search di ampiezza 5 e al massimo
+8 thread. Flash attention è accesa. Se il motore è Whisper ed è impostato un prompt
+iniziale, viene anteposto al decoder: orienta punteggiatura, maiuscole e
+vocabolario, ma il testo resta l'uscita del motore ASR, senza correzioni
+successive. Il testo dei pezzi interni del motore viene concatenato così com'è,
+senza ripulitura.
 
 Il risultato è una riga di `transcript.jsonl`: identificatore, inizio, fine, testo,
-lingua, nome del modello, SHA-256 del file modello, e i parametri di inferenza
-effettivi. Due segmenti con lo stesso inizio e la stessa fine non vengono scritti
+lingua, nome del modello, SHA-256 dell'artefatto, motore (`whisper` o `parakeet`) e
+i parametri di inferenza effettivi. Due segmenti con lo stesso inizio e la stessa
+fine non vengono scritti
 due volte. Serve perché il replay può riproporre un intervallo già trascritto. Il
 confronto è sugli estremi temporali, non sul testo.
 
@@ -297,7 +341,8 @@ SHA-256, dispositivi o file di origine, soglie VAD, parametri ASR e prompt
 iniziale. `events.jsonl` è il diario. `transcript.jsonl` è la fonte da cui derivano
 tutti gli export. Lo schema attuale è la versione 3; un export di un'altra versione
 viene rifiutato. Il campo `prompt` è stato aggiunto dopo la versione 3 come campo
-opzionale, quindi i transcript precedenti restano leggibili.
+opzionale, quindi i transcript precedenti restano leggibili. Anche `engine` è
+opzionale: se manca, si assume `whisper`.
 
 Gli stati possibili sono `starting`, `running`, `transcription_paused`, `stopping`,
 `completed`, `failed`.
@@ -319,13 +364,12 @@ ai WAV.
 
 `doctor` senza probe fallisce se manca una di queste condizioni: macOS su Apple
 Silicon (`aarch64`), directory di sessione utilizzabile, almeno 64 MiB liberi,
-modello leggibile, almeno un input, BlackHole visibile. Se il file corrisponde a un
-modello documentato (`ggml-small-q5_1.bin`, `ggml-medium-q5_0.bin`,
-`ggml-large-v3-turbo-q8_0.bin`, `ggml-large-v3-q5_0.bin` e le loro varianti in
-`src/model.rs`), dimensione e SHA-256 devono essere quelli attesi. Un altro nome di
-modello, se il file non è vuoto, passa con un avviso nel dettaglio. Sotto 1 GiB
-libero il disco è un avviso; sotto 64 MiB è un fallimento. `ready: false` produce un
-exit code diverso da zero.
+modello indicato e leggibile, almeno un input, BlackHole visibile. Se l'artefatto
+corrisponde a un modello documentato in `src/model.rs`, dimensione e SHA-256 devono
+essere quelli attesi; per un bundle viene verificato ogni file e viene nominato
+quello mancante o corrotto. Un altro nome di modello, se il file non è vuoto, passa
+con un avviso nel dettaglio. Sotto 1 GiB libero il disco è un avviso; sotto 64 MiB
+è un fallimento. `ready: false` produce un exit code diverso da zero.
 
 Il permesso del microfono e il routing vero della call restano non verificati finché
 non si usa `--probe-audio`, e anche quello dice solo se in quei secondi è arrivato

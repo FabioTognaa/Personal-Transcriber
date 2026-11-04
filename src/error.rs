@@ -54,8 +54,17 @@ pub enum Error {
     #[error("invalid segmenter configuration: {0}")]
     InvalidSegmenterConfig(String),
 
-    #[error("a local whisper model is required; pass --model <GGML .bin>")]
+    #[error("a model is required; pass --model <path> or choose one from the menu")]
     ModelRequired,
+
+    #[error(
+        "no model is available under {}; download a Whisper GGML file or a Parakeet bundle there (see docs/COMMANDS_HELP.md)",
+        .0.display()
+    )]
+    NoModelsAvailable(PathBuf),
+
+    #[error("model preset `{name}` is not downloaded; expected it at {}", path.display())]
+    ModelNotDownloaded { name: String, path: PathBuf },
 
     #[error("an audio file is required; pass it on the command line or run on a terminal")]
     InputRequired,

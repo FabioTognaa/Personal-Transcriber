@@ -13,6 +13,16 @@ pub enum InferenceStrategy {
     BeamSearch,
 }
 
+/// The runtime that turns audio into text. Users select a model, not an engine;
+/// the engine is derived from the model artifact and recorded with it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EngineKind {
+    #[default]
+    Whisper,
+    Parakeet,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct InferenceConfig {
     pub threads: i32,
@@ -59,6 +69,9 @@ pub struct ModelIdentity {
     pub name: String,
     pub sha256: String,
     pub size_bytes: u64,
+    /// Engine that ran this model. Older records default to Whisper.
+    #[serde(default)]
+    pub engine: EngineKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -234,6 +247,9 @@ pub struct TranscriptSegment {
     pub language: String,
     pub model: String,
     pub model_sha256: String,
+    /// Engine that produced this line. Older records default to Whisper.
+    #[serde(default)]
+    pub engine: EngineKind,
     pub inference: InferenceConfig,
 }
 
@@ -375,6 +391,7 @@ mod tests {
             language: "it".to_owned(),
             model: "fixture-model".to_owned(),
             model_sha256: "fixture-sha256".to_owned(),
+            engine: EngineKind::Whisper,
             inference: InferenceConfig::default(),
         };
 
@@ -384,5 +401,32 @@ mod tests {
 
         assert_eq!(decoded, segment);
         assert_eq!(decoded.text, "Testo ASR  non corretto.");
+    }
+
+    #[test]
+    fn old_transcript_lines_without_engine_default_to_whisper() {
+        let mut value = serde_json::to_value(TranscriptSegment {
+            schema_version: SCHEMA_VERSION,
+            segment_id: Uuid::nil(),
+            session_id: Uuid::nil(),
+            start: TimestampUs(0),
+            end: TimestampUs(1_000_000),
+            text: "ciao".to_owned(),
+            language: "it".to_owned(),
+            model: "fixture-model".to_owned(),
+            model_sha256: "fixture-sha256".to_owned(),
+            engine: EngineKind::Parakeet,
+            inference: InferenceConfig::default(),
+        })
+        .expect("segment should serialize");
+        value
+            .as_object_mut()
+            .expect("segment is an object")
+            .remove("engine");
+
+        let decoded: TranscriptSegment =
+            serde_json::from_value(value).expect("old segment should deserialize");
+
+        assert_eq!(decoded.engine, EngineKind::Whisper);
     }
 }

@@ -4,6 +4,7 @@ use std::time::Duration;
 use cpal::traits::{DeviceTrait, HostTrait};
 use serde::Serialize;
 
+use crate::model::ModelArtifact;
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -254,36 +255,21 @@ fn disk_space_check(sessions_dir: &Path) -> DoctorCheck {
 }
 
 fn model_check(model: &Path) -> DoctorCheck {
-    match crate::validation::validate_existing_file(model, "model")
-        .and_then(|_| crate::asr::model_identity(model))
-    {
-        Ok(identity) => match crate::model::known_model(&identity.name) {
-            Some(known)
-                if known.size_bytes == identity.size_bytes && known.sha256 == identity.sha256 =>
-            {
-                DoctorCheck {
-                    name: "model",
-                    status: CheckStatus::Pass,
-                    detail: format!(
-                        "{} matches the documented {}-byte model (sha256 {})",
-                        identity.path.display(),
-                        identity.size_bytes,
-                        identity.sha256
-                    ),
-                }
-            }
-            Some(_) => DoctorCheck {
+    let artifact = match ModelArtifact::detect(model) {
+        Ok(artifact) => artifact,
+        Err(error) => {
+            return DoctorCheck {
                 name: "model",
                 status: CheckStatus::Fail,
-                detail: format!(
-                    "{} does not match the documented {}: got {} bytes, sha256 {}",
-                    identity.path.display(),
-                    identity.name,
-                    identity.size_bytes,
-                    identity.sha256
-                ),
-            },
-            None => DoctorCheck {
+                detail: error.to_string(),
+            };
+        }
+    };
+    let name = artifact.name();
+    let Some(known) = crate::model::known_model(&name) else {
+        // Unknown artifact: one aggregate hash is all we can report.
+        return match crate::asr::model_identity(&artifact) {
+            Ok(identity) => DoctorCheck {
                 name: "model",
                 status: CheckStatus::Pass,
                 detail: format!(
@@ -293,13 +279,89 @@ fn model_check(model: &Path) -> DoctorCheck {
                     identity.sha256
                 ),
             },
-        },
-        Err(error) => DoctorCheck {
+            Err(error) => DoctorCheck {
+                name: "model",
+                status: CheckStatus::Fail,
+                detail: error.to_string(),
+            },
+        };
+    };
+    if known.kind != artifact.kind {
+        return DoctorCheck {
             name: "model",
             status: CheckStatus::Fail,
-            detail: error.to_string(),
-        },
+            detail: format!(
+                "{} is documented as {:?}, but the artifact is {:?}",
+                artifact.path.display(),
+                known.kind,
+                artifact.kind
+            ),
+        };
     }
+
+    // Verify each file exactly once, keeping its hash so the aggregate can be
+    // rebuilt without reading the bundle a second time.
+    let mut per_file = Vec::with_capacity(known.files.len());
+    let mut size_bytes = 0_u64;
+    for expected in known.files {
+        let path = match artifact.kind {
+            crate::model::ArtifactKind::SingleFile => artifact.path.clone(),
+            crate::model::ArtifactKind::Bundle => artifact.path.join(expected.name),
+        };
+        match verify_known_file(&path, expected) {
+            Ok((sha256, len)) => {
+                size_bytes = size_bytes.saturating_add(len);
+                per_file.push((expected.name.to_owned(), sha256));
+            }
+            Err(detail) => {
+                return DoctorCheck {
+                    name: "model",
+                    status: CheckStatus::Fail,
+                    detail,
+                };
+            }
+        }
+    }
+    let sha256 = match artifact.kind {
+        crate::model::ArtifactKind::Bundle => crate::asr::bundle_sha256(&per_file),
+        crate::model::ArtifactKind::SingleFile => per_file
+            .first()
+            .map_or_else(String::new, |(_, sha256)| sha256.clone()),
+    };
+    DoctorCheck {
+        name: "model",
+        status: CheckStatus::Pass,
+        detail: format!(
+            "{} matches the documented {size_bytes}-byte model (sha256 {sha256})",
+            artifact.path.display()
+        ),
+    }
+}
+
+fn verify_known_file(
+    path: &Path,
+    expected: &crate::model::KnownFile,
+) -> std::result::Result<(String, u64), String> {
+    let metadata =
+        std::fs::metadata(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if metadata.len() != expected.size_bytes {
+        return Err(format!(
+            "{}: expected {} bytes, got {}",
+            path.display(),
+            expected.size_bytes,
+            metadata.len()
+        ));
+    }
+    let sha256 =
+        crate::asr::sha256_file(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if sha256 != expected.sha256 {
+        return Err(format!(
+            "{}: expected sha256 {}, got {sha256}",
+            path.display(),
+            expected.sha256
+        ));
+    }
+    Ok((sha256, metadata.len()))
 }
 
 fn device_checks() -> Vec<DoctorCheck> {
@@ -380,10 +442,31 @@ mod tests {
         let temporary = tempfile::tempdir().expect("temp directory should be created");
         let model = temporary
             .path()
-            .join(crate::model::ModelPreset::Small.file_name());
+            .join(crate::model::ModelPreset::Small.artifact_name());
         std::fs::write(&model, b"not the documented model").expect("fixture should be written");
 
         assert_eq!(model_check(&model).status, CheckStatus::Fail);
+    }
+
+    #[test]
+    fn corrupted_bundle_names_the_bad_file() {
+        let temporary = tempfile::tempdir().expect("temp directory should be created");
+        let bundle = temporary.path().join("parakeet-tdt-0.6b-v3-onnx");
+        std::fs::create_dir(&bundle).expect("bundle directory");
+        for name in [
+            crate::model::PARAKEET_CONFIG,
+            crate::model::PARAKEET_VOCAB,
+            "nemo128.onnx",
+            crate::model::PARAKEET_ENCODER,
+            crate::model::PARAKEET_DECODER_JOINT,
+        ] {
+            std::fs::write(bundle.join(name), b"x").expect("fixture");
+        }
+
+        let check = model_check(&bundle);
+
+        assert_eq!(check.status, CheckStatus::Fail);
+        assert!(check.detail.contains("config.json"));
     }
 
     #[test]

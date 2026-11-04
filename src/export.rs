@@ -319,6 +319,7 @@ mod tests {
             language: "it".to_owned(),
             model: "fixture.bin".to_owned(),
             model_sha256: "fixture-sha256".to_owned(),
+            engine: crate::domain::EngineKind::Whisper,
             inference: InferenceConfig::default(),
         }
     }

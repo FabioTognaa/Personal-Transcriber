@@ -6,6 +6,9 @@
 /models/
 .agents/skills/*    
 
+# Generated benchmark fixtures (see benchmarks/README.md to regenerate them)
+/benchmarks/fixtures/silence_*
+
 # Local IDE and editor files
 .DS_Store
 .idea/

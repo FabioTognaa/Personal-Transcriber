@@ -36,26 +36,44 @@ opzioni **VAD** e di **inferenza** valgono per `start` e `transcribe`.
 
 ### Modello e lingua
 
-| Opzione                 | Tipo         | Default                         | Descrizione                                                                                           |
-| ----------------------- | ------------ | ------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `--model <PERCORSO>`    | percorso     | —                               | File GGML locale. Ha la precedenza su `--model-preset`.                                               |
-| `--model-preset <NOME>` | enum         | `small`                         | Modello documentato risolto sotto `models/`. Valori: `small`, `medium`, `large-v3-turbo`, `large-v3`. |
-| `--language <LINGUA>`   | `it` \| `en` | `it`                            | Lingua parlata, valida per tutta la sessione o per l'intero file. Nessun rilevamento automatico.      |
-| `--asr-prompt <TESTO>`  | testo        | prompt predefinito della lingua | Prompt iniziale per Whisper. `--asr-prompt ""` lo disattiva.                                          |
+| Opzione                 | Tipo         | Default | Descrizione                                                                                                                    |
+| ----------------------- | ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `--model <PERCORSO>`    | percorso     | —       | File GGML singolo oppure directory bundle Parakeet. Ha la precedenza su `--model-preset`.                                      |
+| `--model-preset <NOME>` | enum         | —       | Modello documentato risolto sotto `models/` (o `SCRIB_MODELS_DIR`). Valori: `small`, `medium`, `large-v3-turbo`, `large-v3`, `parakeet-v3`. |
+| `--language <LINGUA>`   | `it` \| `en` | `it`    | Lingua parlata. Per Parakeet è solo dichiarativa: il modello rileva la lingua da solo.                                         |
+| `--asr-prompt <TESTO>`  | testo        | prompt predefinito della lingua (solo Whisper) | Prompt iniziale per Whisper. `--asr-prompt ""` lo disattiva. Parakeet lo ignora.                           |
 
-Se non si passa né `--model` né `--model-preset` e si lancia `start` da un
-terminale interattivo, compare un menu dei modelli; senza terminale (script, CI,
-test) il menu non compare e vale `small`. Dal menu, `q` annulla la scelta e non
-avvia nulla.
+Non esiste un modello predefinito. Se non si passa né `--model` né
+`--model-preset` e si lancia `start` o `transcribe` da un terminale interattivo,
+compare un menu con i **soli modelli presenti su disco**, ordinati per
+dimensione. Se ce n'è uno solo viene scelto senza domanda. Senza terminale e
+senza modello il comando fallisce con un errore esplicito. Dal menu, `q` annulla
+la scelta e non avvia nulla.
 
-Preset e file documentati:
+Preset e artefatti documentati:
 
-| Preset           | File                                  | Dimensione |
-| ---------------- | ------------------------------------- | ---------- |
-| `small`          | `models/ggml-small-q5_1.bin`          | ~190 MB    |
-| `medium`         | `models/ggml-medium-q5_0.bin`         | ~540 MB    |
-| `large-v3-turbo` | `models/ggml-large-v3-turbo-q8_0.bin` | ~874 MB    |
-| `large-v3`       | `models/ggml-large-v3-q5_0.bin`       | ~1,1 GB    |
+| Preset           | Artefatto                                      | Dimensione |
+| ---------------- | ---------------------------------------------- | ---------- |
+| `small`          | `models/ggml-small-q5_1.bin`                   | ~190 MB    |
+| `medium`         | `models/ggml-medium-q5_0.bin`                  | ~540 MB    |
+| `large-v3-turbo` | `models/ggml-large-v3-turbo-q8_0.bin`          | ~874 MB    |
+| `large-v3`       | `models/ggml-large-v3-q5_0.bin`                | ~1,1 GB    |
+| `parakeet-v3`    | `models/parakeet-tdt-0.6b-v3-onnx/` (directory) | ~670 MB    |
+
+Parakeet è una directory con più file ONNX (licenza CC-BY-4.0). Per scaricare
+solo la variante int8:
+
+```sh
+mkdir -p models/parakeet-tdt-0.6b-v3-onnx
+for f in config.json vocab.txt nemo128.onnx \
+         encoder-model.int8.onnx decoder_joint-model.int8.onnx; do
+  curl -fL \
+    "https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main/$f" \
+    -o "models/parakeet-tdt-0.6b-v3-onnx/$f"
+done
+```
+
+Parakeet è incluso nella build standard.
 
 ### Segmentazione vocale (VAD)
 
@@ -69,7 +87,7 @@ Flag per impsotare i timing del riconscimento vocale, di seguito le impostazioni
 
 ### Inferenza
 
-L'unico flag dispnibile è quello della flash attention attivato di default. Per controllare se l'accuraezza migliora a scapito di un esosità di memorie e tempo vi consiglio di fare delle proveComparative.
+L'unico flag dispnibile è quello della flash attention attivato di default. Per controllare se l'accuraezza migliora a scapito di un esosità di memorie e tempo vi consiglio di fare delle proveComparative. Parakeet ignora la flash attention e gli altri parametri di decoding di Whisper.
 
 | Opzione                               | Tipo     | Default | Descrizione                                                                                               |
 | ------------------------------------- | -------- | ------- | --------------------------------------------------------------------------------------------------------- |
@@ -99,8 +117,8 @@ l'exit code è diverso da zero.
 
 | Opzione                     | Tipo     | Default           | Descrizione                                                                                            |
 | --------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------ |
-| `--model <PERCORSO>`        | percorso | preset `small`    | Modello da verificare. Ha la precedenza su `--model-preset`.                                           |
-| `--model-preset <NOME>`     | enum     | `small`           | Preset da verificare se `--model` non è passato.                                                       |
+| `--model <PERCORSO>`        | percorso | —                 | Modello da verificare (file o directory). Ha la precedenza su `--model-preset`.                        |
+| `--model-preset <NOME>`     | enum     | —                 | Preset da verificare se `--model` non è passato. Senza nessuno dei due, `doctor` fallisce.             |
 | `--probe-audio`             | flag     | spento            | Apre entrambi gli input live per tre secondi e verifica che arrivi segnale, senza creare una sessione. |
 | `--microphone <NOME>`       | testo    | input predefinito | Microfono usato dal probe. Richiede `--probe-audio`.                                                   |
 | `--system-audio <NOME>`     | testo    | BlackHole         | Input di sistema usato dal probe. Richiede `--probe-audio`.                                            |
@@ -121,9 +139,9 @@ scrib start [opzioni]
 | `--system-audio <NOME>`        | testo        | BlackHole rilevato | Dispositivo dell'audio di sistema.   |
 | `--silence-timeout <MINUTI>`   | intero 1–30  | `15`               | Chiude la sessione dopo N minuti di silenzio consecutivo. |
 | `--model <PERCORSO>`           | percorso     | —                  | Vedi “Modello e lingua”.             |
-| `--model-preset <NOME>`        | enum         | `small`            | Vedi “Modello e lingua”.             |
+| `--model-preset <NOME>`        | enum         | —                  | Vedi “Modello e lingua”.             |
 | `--language <LINGUA>`          | `it` \| `en` | `it`               | Vedi “Modello e lingua”.             |
-| `--asr-prompt <TESTO>`         | testo        | predefinito lingua | Vedi “Modello e lingua”.             |
+| `--asr-prompt <TESTO>`         | testo        | predefinito lingua (solo Whisper) | Vedi “Modello e lingua”.             |
 | `--vad-threshold <NUMERO>`     | decimale     | `0.02`             | Vedi “Segmentazione vocale”.         |
 | `--vad-start-ms <MS>`          | intero       | `60`               | Vedi “Segmentazione vocale”.         |
 | `--vad-end-ms <MS>`            | intero       | `800`              | Vedi “Segmentazione vocale”.         |
@@ -163,9 +181,9 @@ con `-v`.
 | ------------------------------ | ------------ | ------------------ | ---------------------------------------------- |
 | `<FILE>` (argomento)           | percorso     | —                  | Input `.wav`, `.mp3`, `.m4a`, `.mp4` o `.aac`; chiesto su terminale se omesso. |
 | `--model <PERCORSO>`           | percorso     | —                  | Vedi “Modello e lingua”.                       |
-| `--model-preset <NOME>`        | enum         | `small`            | Vedi “Modello e lingua”.                       |
+| `--model-preset <NOME>`        | enum         | —                  | Vedi “Modello e lingua”.                       |
 | `--language <LINGUA>`          | `it` \| `en` | `it`               | Vedi “Modello e lingua”.                       |
-| `--asr-prompt <TESTO>`         | testo        | predefinito lingua | Vedi “Modello e lingua”.                       |
+| `--asr-prompt <TESTO>`         | testo        | predefinito lingua (solo Whisper) | Vedi “Modello e lingua”.                       |
 | `--vad-threshold <NUMERO>`     | decimale     | `0.02`             | Vedi “Segmentazione vocale”.                   |
 | `--vad-start-ms <MS>`          | intero       | `60`               | Vedi “Segmentazione vocale”.                   |
 | `--vad-end-ms <MS>`            | intero       | `800`              | Vedi “Segmentazione vocale”.                   |

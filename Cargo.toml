@@ -28,11 +28,15 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
 whisper-rs = { version = "=0.16.0", default-features = false, features = ["tracing_backend"] }
+ort = { version = "=2.0.0-rc.15", optional = true }
 
 [features]
-default = ["metal"]
+# One official build: Whisper and Parakeet together. `--no-default-features
+# --features metal` is the escape hatch for a lean Whisper-only build.
+default = ["metal", "parakeet"]
 metal = ["whisper-rs/metal"]
 coreml = ["whisper-rs/coreml"]
+parakeet = ["dep:ort"]
 
 [dev-dependencies]
 tempfile = "3.23.0"

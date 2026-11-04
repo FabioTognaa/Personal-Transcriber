@@ -2,10 +2,11 @@ use std::ffi::OsStr;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use crate::asr::{AsrEngine, WhisperEngine, validate_inference_config};
+use crate::asr::{AsrEngine, load_engine, validate_inference_config};
 use crate::audio::{CompressedAudioSource, FileAudioSource};
 use crate::domain::{InferenceConfig, PcmChunk, SegmenterConfig, SpeechSegment};
 use crate::export::{SegmentLine, render_text};
+use crate::model::ModelArtifact;
 use crate::segment::Segmenter;
 use crate::{Error, Result};
 
@@ -30,10 +31,10 @@ pub fn run(options: TranscribeOptions) -> Result<()> {
     validate_inference_config(&options.inference)?;
     crate::validation::validate_directory_target(&options.sessions_dir, "sessions directory")?;
     crate::validation::validate_existing_file(&options.input, "input audio")?;
-    crate::validation::validate_existing_file(&options.model, "model")?;
+    let artifact = ModelArtifact::detect(&options.model)?;
 
     let started_at_unix_ms = crate::storage::unix_time_ms()?;
-    let mut engine = WhisperEngine::load(&options.model, &options.inference)?;
+    let mut engine = load_engine(&artifact, &options.inference)?;
     let mut source = AudioInput::open(&options.input)?;
     let mut segmenter = Segmenter::new(options.segmenter.clone())?;
     let mut progress =
@@ -204,11 +205,13 @@ fn append_segments<E: AsrEngine>(
     for segment in segments {
         let end_us = segment.end.0;
         let output = engine.transcribe(&segment, language, inference)?;
-        lines.push(SegmentLine {
-            start: segment.start,
-            end: segment.end,
-            text: output.text,
-        });
+        if !output.text.trim().is_empty() {
+            lines.push(SegmentLine {
+                start: segment.start,
+                end: segment.end,
+                text: output.text,
+            });
+        }
         on_progress(end_us);
     }
     Ok(())
@@ -335,6 +338,46 @@ mod tests {
         assert_eq!(lines[0].start, TimestampUs(0));
         // Progress reports the end of each transcribed segment.
         assert_eq!(seen, vec![lines[0].end.0]);
+    }
+
+    struct SilentAsr;
+
+    impl AsrEngine for SilentAsr {
+        fn transcribe(
+            &mut self,
+            _segment: &SpeechSegment,
+            _language: &str,
+            _config: &InferenceConfig,
+        ) -> Result<AsrOutput> {
+            Ok(AsrOutput {
+                text: "   ".to_owned(),
+                inference_duration_us: 1,
+            })
+        }
+    }
+
+    #[test]
+    fn empty_engine_output_does_not_create_a_line_but_progress_advances() {
+        let temporary = tempfile::tempdir().expect("temp dir");
+        let input = temporary.path().join("short.wav");
+        write_voiced_wav(&input);
+
+        let mut source = AudioInput::open(&input).expect("source opens");
+        let mut engine = SilentAsr;
+        let mut segmenter = Segmenter::new(SegmenterConfig::default()).expect("segmenter");
+        let mut seen = Vec::new();
+        let lines = collect_lines(
+            &mut source,
+            &mut engine,
+            &mut segmenter,
+            "it",
+            &InferenceConfig::default(),
+            &mut |end_us| seen.push(end_us),
+        )
+        .expect("transcription succeeds");
+
+        assert!(lines.is_empty());
+        assert_eq!(seen.len(), 1);
     }
 
     #[test]

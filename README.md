@@ -24,7 +24,18 @@ Attualmente il programma e' in fase di pre-release ed è destinata a macOS Apple
 
 # Come posso usare questo programma?
 
-Questo trascrittore si basa su un modello di
+## Modelli e motori
+
+Scribroom supporta due motori, scelti indirettamente dal modello:
+
+- **Whisper** (`whisper.cpp`): file GGML singoli; supporta prompt e glossario.
+- **Parakeet TDT 0.6B v3** (ONNX Runtime): directory bundle, 25 lingue europee,
+  punteggiatura nativa, nessun prompt.
+
+Non esiste un modello predefinito: `start`, `transcribe` e `doctor` richiedono
+`--model`, `--model-preset`, oppure una scelta dal menu interattivo. Il menu
+mostra solo i modelli già presenti su disco e li ordina per dimensione; se non
+ce ne sono, il comando spiega come scaricarli.
 
 ## Live Recording
 
@@ -47,14 +58,13 @@ Questi segnali vengono registrati solo al momento del comando `start`.
 In questo fragente vengono validate anche le potenziali opzioni di alcune flag, come la lingua del parlato, verifica che il modello scelto esista e viene calcolata l'identità del modello.
 Quest'ultima viene calcolata tramite l'algoritmo SHA-256 e viene memorizzata in un file .sha256 per non dover ricalcolare l'identità del modello ogni volta. È utile per riconsocere quale modello ha prodotto un eventuale transcript e per fare in modo che il comando `doctor` si a certo di quale modello sia caricabile e che non venga scambiato per un altro.
 
-Viene poi **caricato Whisper** in memoria:
+Viene poi **caricato il motore dedotto dall'artefatto scelto**:
 
-**Whisper** è una rete neurale di tipo Transformer - create da OpenAI - che svolge la funzione di encoder-decoder per riconsocere il parlato da uno spettrogramma
-I file dei pesi sono disponibili nella cartella **/models**.
+**Whisper** è una rete neurale di tipo Transformer - creata da OpenAI - che svolge la funzione di encoder-decoder per riconoscere il parlato da uno spettrogramma. I file dei pesi sono disponibili nella cartella **/models** e girano tramite **Whisper.cpp** (whisper-rs).
 
-Il modello viene fatto girare tramite **Whisper.cpp**, il motore del modello importato tramite whisper-rs.
+**Parakeet** è un modello NVIDIA (NeMo, TDT) eseguito tramite ONNX Runtime. Vive in una directory con più file ONNX ed è incluso nella build standard; la feature `parakeet` resta solo come uscita di sicurezza per compilare senza ONNX Runtime.
 
-Il modello viene poi dato ad un thread worker, che a seconda del compito lo usa liberamente.
+Il motore viene dato ad un thread worker, che a seconda del compito lo usa liberamente.
 
 - valida la --sessions-dir; prende il lock esclusivo sessions/.runner.lock (un solo start alla volta); recupera una sessione rimasta running da un crash precedente marcandola failed.
 - risolve la sorgente: microfono = input di default (o --microphone); sistema = BlackHole (o --system-audio); i due devono essere dispositivi diversi.
@@ -75,7 +85,9 @@ Per quanto riguarda i formati wav, ad oggi non c'è ancora una funzione nativa c
 
 - La v1 supporta macOS su Apple Silicon; Windows e Linux non sono supportati.
 - La lingua deve essere scelta esplicitamente tra italiano e inglese; non esiste
-  rilevamento automatico.
+  rilevamento automatico. Per Parakeet `--language` è solo dichiarativa: il
+  modello rileva la lingua da solo.
+- Parakeet ignora il prompt/glossario e i parametri di decoding di Whisper.
 - Non sono incluse diarizzazione, identificazione degli speaker, UI o funzioni cloud.
 - I file delle sessioni non sono cifrati a riposo.
 - Il rilevamento del parlato usa una soglia energetica RMS, non un modello VAD.
@@ -87,8 +99,9 @@ Per quanto riguarda i formati wav, ad oggi non c'è ancora una funzione nativa c
 
 - [Sezione aiuto per tutti i comandi](docs/COMMANDS_HELP.md)
 - [Funzionamento e architettura](docs/RELAZIONE.md)
-- [Contesto completo e scelte architetturali](PROJECT_CONTEXT.md)
-- [Roadmap di implementazione](ROADMAP.md)
+- [Piano Parakeet](docs/PARAKEET_PLAN.md)
+- [Glossario del dominio](GLOSSARY.md)
+- [Decisioni architetturali](docs/adr/)
 - [Come leggere una cartella di sessione](sessions/README.md)
 - [Storico delle modifiche](CHANGELOG.md)
 
@@ -109,6 +122,13 @@ richiede `PERSONAL_TRANSCRIBER_MODEL`:
 ```sh
 PERSONAL_TRANSCRIBER_MODEL=models/ggml-small-q5_1.bin \
   cargo test real_whisper_model_processes_local_audio -- --ignored
+```
+
+Il test Parakeet è ignorato per impostazione predefinita e richiede il bundle
+nella cartella dei modelli:
+
+```sh
+cargo test --lib parakeet -- --ignored
 ```
 
 ## Privacy e consenso

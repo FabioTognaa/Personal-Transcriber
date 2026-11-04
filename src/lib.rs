@@ -9,6 +9,8 @@ pub mod export;
 pub mod live_audio;
 pub mod logging;
 pub mod model;
+#[cfg(feature = "parakeet")]
+pub mod parakeet;
 pub mod schema;
 pub mod segment;
 pub mod session;

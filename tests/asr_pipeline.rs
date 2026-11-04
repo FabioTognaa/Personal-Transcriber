@@ -8,8 +8,9 @@ use personal_transcriber::asr::{
 };
 use personal_transcriber::audio::FileAudioSource;
 use personal_transcriber::domain::{
-    InferenceConfig, ModelIdentity, SegmenterConfig, SpeechSegment, TranscriptSegment,
+    EngineKind, InferenceConfig, ModelIdentity, SegmenterConfig, SpeechSegment, TranscriptSegment,
 };
+use personal_transcriber::model::ModelArtifact;
 use personal_transcriber::session::{self, SegmentSink, StartOptions};
 use uuid::Uuid;
 
@@ -316,7 +317,8 @@ fn real_whisper_model_processes_local_audio() {
     engine
         .transcribe(&segment, "it", &config)
         .expect("whisper inference should succeed");
-    model_identity(&model_path).expect("model identity should be readable");
+    model_identity(&ModelArtifact::detect(&model_path).expect("model artifact"))
+        .expect("model identity should be readable");
 }
 
 fn fixture_model() -> ModelIdentity {
@@ -325,6 +327,7 @@ fn fixture_model() -> ModelIdentity {
         name: "mock.bin".to_owned(),
         sha256: "fixture-sha256".to_owned(),
         size_bytes: 1,
+        engine: EngineKind::Whisper,
     }
 }
 
