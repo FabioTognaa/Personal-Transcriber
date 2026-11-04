@@ -1,47 +1,6 @@
 PROSSIME TASK
 ------------------------------
 
-FIX CI:
-In questo momento la CI fallisce su uno dei test per qualche ragione, va risolta
-
-- capire dove sia il problema e provare a risolvere la pipeline 
-- i test falliti devono essere analizzati e sistemati se necessario 
-.......................................
-
-FIX E PICCOLI CAMBIAMENTI 
-- la cartella dei modelli si può ora impostare con SCRIB_MODELS_DIR (default models/); resta da definire un percorso assoluto per il binario installato
-- (fatto) nome del comando: scrib
-
-INSERIRE PARAKEET COME NUOVO MODELLO (fatto)
-- Parakeet TDT 0.6B v3 int8, incluso nella build standard
-- menu dinamico con i soli modelli presenti, ordinati per dimensione
-- nessun modello predefinito: la scelta è sempre esplicita
-- restano da misurare 3-4 riunioni reali con riferimento
-............................................................................
-
-MIGLIORARE IL MENU' DELE SCELTE
-Ho notato che spesso vengono usate delle grafiche per la cli quando si dei comandi che attivano servizi: opencode ad esempio a una sua grafica, animazioni e altro...
-Vorrei anche io una cosa del genere al menù, in particolare vorrei che lo stile fosse uguale a quello delle skills di mat pockock: molto pulito e bello da vedere
-
-- le scelte rimangono sempre le solite (inserimento del nome della repo e scelta del modello), cambia solo l'interfacia del terminale
-- le animazioni devono essere fluide e non interferire con la ux in alcun modo
-- in generale deve essere una cosa elegante, leggera e non invasiva
-
-...........................................................................
-MIGLIORARE PRESTAZIONI TRASCRIBER
-Occorre assolutamente che il comando transcribe funzioni più velocemente, ad oggi è veramente lento
-
-- capire se il problema è tecnico (pesantezza del modello) o algoritmico(dal momento che questa funzionalità non è live possiamo anche fare in modo che usi dinamiche di trascrizione diverse e più veloci)
-..............................................................
-
-
-BUG USCITA AUDIO DI BLACKHOLE:
-Quando si attiva la registrazione live con l'uscita multiaudio si sente molto grattare l'audio, non ho idea del perchè
-
-- provare a fixare mantenendo Blakhole??
-- sostituire Blackhole?? (consigliato)
-
-
 PROTABILITA':
 
 - Rendere il programma disponibile anche per Windows, Linux e Apple senza Apple Silicon
